@@ -1,3 +1,217 @@
+Find_Sci_Names <- function(spnames, 
+                           db = c("gbif","itis","ncbi","iucn"),
+                           priority = "gbif",
+                           suggest_names = FALSE, 
+                           return_accepted_only = FALSE){
+    
+    require("bdc")
+    require("taxadb")
+    require("traitdataform")
+    
+    # Create empty table 
+    
+    tofind <- data.frame(matrix(nrow = length(spnames), ncol = 8))
+    names(tofind) = c("scientificName", "kingdom", "phylum", "class", "order", "family", "db", "db_code")
+    tofind <- data.frame(species = spnames, tofind)
+    
+    for(i in 1:length(db)){ 
+        
+        cat("\n\n", db[i],"\n\n")
+        
+        if(db[i] == "gbif"){
+            
+            # retrieve sp names
+            togo <- tofind[which(is.na(tofind$scientificName)),]
+            
+            cl <- makeCluster(detectCores()-2)
+            clusterExport(cl, c("togo","standardize_taxa"))
+            
+            new_names <- pblapply(togo$species, function(x){
+                try(standardize_taxa(data.frame(verbatimScientificName = x), 
+                                     fuzzy = FALSE,
+                                     silent = TRUE))
+            }, cl = cl)
+            
+            stopCluster(cl)
+            
+            rem <- sapply(new_names, class)
+            rem <- which(rem=="try-error")
+            if(any(rem)){
+                new_names <- new_names[-rem]
+            }
+            new_names <- rbindlist(new_names)
+            
+            new_names <- new_names[-which(is.na(new_names$scientificName)),]
+            new_names <- new_names[which(new_names$taxonRank=='species'),]
+            
+            # remove duplicates
+            if(any(duplicated(new_names$verbatimScientificName))){
+                new_names <- new_names[-which(duplicated(new_names$verbatimScientificName)),]
+            }
+            
+            cat("--- Summary ---\n",
+                "N taxa:",nrow(togo),"\n",
+                "N taxa found:",nrow(new_names), "\n",
+                "N taxa not found:", nrow(togo)-nrow(new_names))
+            
+            if(!nrow(new_names) == 0){
+                new_names <- new_names[,c("verbatimScientificName","scientificName","kingdom","phylum","class","order","family","taxonID")]
+                names(new_names) <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+                new_names$db <- "gbif"
+                new_names$db_code <- gsub("http://www.gbif.org/species/","",new_names$db_code)
+                new_names$db_code <- paste("GBIF:",new_names$db_code,sep = "")
+                
+                # Feed
+                tofind <- tofind %>% 
+                    rows_patch(new_names, 
+                               by = "species")
+            }
+            
+        } 
+        if(db[i]=="iucn"){
+            
+            # retrieve sp names
+            togo <- tofind[which(is.na(tofind$scientificName)),]
+            
+            new_names<-bdc_query_names_taxadb(togo$species, 
+                                              db = "iucn",
+                                              suggest_names = FALSE) # using exact names
+            new_names$scientificName <- paste(new_names$genus,new_names$specificEpithet) 
+            
+            # remove duplicates
+            if(any(duplicated(new_names$original_search))){
+                new_names <- new_names[-which(duplicated(new_names$original_search)),]
+            }
+            
+            # select only accepted names
+            new_names <- new_names[which(new_names$taxonomicStatus == "accepted"),]
+            
+            cat("--- Summary ---\n",
+                "N taxa:",nrow(togo),"\n",
+                "N taxa found:",length(which(new_names$taxonomicStatus == "accepted")), "\n",
+                "N taxa not found:", nrow(togo)-length(which(new_names$taxonomicStatus == "accepted")))
+            
+            if(!nrow(new_names) == 0){
+                new_names <- new_names[,c("original_search","scientificName","kingdom","phylum","class","order","family","acceptedNameUsageID")]
+                names(new_names) <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+                new_names$db <- "iucn"
+                
+                # Feed
+                tofind <- tofind %>% 
+                    rows_patch(new_names, 
+                               by = "species")
+            }
+            
+        } 
+        if(db[i]=="itis" | db[i]=="ncbi"){
+            # retrieve sp names
+            togo <- tofind[which(is.na(tofind$scientificName)),]
+            
+            # retrieve sp names
+            new_names <- Find_Names(spnames = togo$species,
+                                    db = "itis",
+                                    suggest_names = FALSE, # using exact names
+                                    return_accepted_only = TRUE) 
+            
+            # remove duplicates
+            if(any(duplicated(new_names$original_search))){
+                new_names <- new_names[-which(duplicated(new_names$original_search)),]
+            }
+            
+            cat("--- Summary ---\n",
+                "N taxa:",nrow(togo),"\n",
+                "N taxa found:",length(which(new_names$taxonomicStatus == "accepted")), "\n",
+                "N taxa not found:", nrow(togo)-length(which(new_names$taxonomicStatus == "accepted")))
+            
+            if(!nrow(new_names) == 0){
+                
+                new_names <- new_names[,c("original_search","scientificName","kingdom","phylum","class","order","family","acceptedNameUsageID")]
+                names(new_names) <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+                new_names$db <- "itis"
+                
+                # Feed
+                tofind <- tofind %>% 
+                    rows_patch(new_names, 
+                               by = "species")
+            }
+            
+        }
+    }
+    
+    #################################
+    # Fix issues with scientific names
+    new <- sapply(tofind$scientificName, function(x){
+        tmp <- strsplit(x," ")[[1]]
+        if(any(duplicated(tmp))){
+            paste(tmp[-1], collapse = " ")
+        } else {
+            x
+        }
+    })
+    
+    tofind$scientificName <- new
+    
+    #################################
+    # Priority
+    cat("\nPrioriotizing", priority)
+    
+    # retrieve sp names
+    if(priority == "gbif"){
+        
+        # retrieve sp names
+        togo <- tofind[which(!tofind$db=="gbif"),]
+        
+        cl <- makeCluster(detectCores()-2)
+        clusterExport(cl, c("togo","standardize_taxa"))
+        
+        new_names <- pblapply(togo$species, function(x){
+            try(standardize_taxa(data.frame(verbatimScientificName = x), 
+                                 fuzzy = FALSE,
+                                 silent = TRUE))
+        }, cl = cl)
+        
+        stopCluster(cl)
+        
+        rem <- sapply(new_names, class)
+        rem <- which(rem=="try-error")
+        if(any(rem)){
+            new_names <- new_names[-rem]
+        }
+        new_names <- rbindlist(new_names)
+        
+        new_names <- new_names[-which(is.na(new_names$scientificName)),]
+        new_names <- new_names[which(new_names$taxonRank=='species'),]
+        
+        # remove duplicates
+        if(any(duplicated(new_names$verbatimScientificName))){
+            new_names <- new_names[-which(duplicated(new_names$verbatimScientificName)),]
+        }
+        
+        cat("--- Summary ---\n",
+            "N taxa:",nrow(togo),"\n",
+            "N taxa found:",nrow(new_names), "\n",
+            "N taxa not found:", nrow(togo)-nrow(new_names))
+        
+        if(!nrow(new_names) == 0){
+            new_names <- new_names[,c("verbatimScientificName","scientificName","kingdom","phylum","class","order","family","taxonID")]
+            names(new_names) <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+            new_names$db <- "gbif"
+            new_names$db_code <- gsub("http://www.gbif.org/species/","",new_names$db_code)
+            new_names$db_code <- paste("GBIF:",new_names$db_code,sep = "")
+            
+            # Feed
+            tofind <- tofind %>% 
+                rows_patch(new_names, 
+                           by = "species")
+        }
+        
+        
+    }
+    
+    return(tofind)
+}
+
+
 
 # x="Arabis bellidifolia"
 
