@@ -1,16 +1,19 @@
 ---
 title: "Adaptive potential\nMerge genetic data"
-author: "Bioshifts"
-output:
-    html_document:
-        toc: true
-        toc_float: true
-        number_sections: true
+author: "Bioshifts group"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    code-summary: "Code"
 ---
 
 # Load libraries and source code
 
-```{r libs}
+```{r libs, echo=FALSE}
+rm(list=ls())
+gc()
 
 library(ggplot2)
 require(data.table)
@@ -21,70 +24,852 @@ library(bdc)
 library(taxadb)
 library(traitdataform)
 library(pbapply)
+library(tidyverse)
+library(readxl)
+library(lme4)
+library(coefplot)
+library(sjPlot)
+library(sjmisc)
+library(effects)
+library(rgdal)
+library(pbapply)
+library(maptools)
+library(rgeos)
+library(terra)
+library(nlme)
 
+```
+
+```{r func}
 source(here::here("R/clean_taxa_functions.r"))
 ```
 
-# Load bishifts
+# Load species list
 
-```{r bioshifts}
-bs_v1 <- fread(here::here('Data/biov1_fixednames.csv'))
-bs_v1$spp <- gsub("_"," ",bs_v1$sp_name_std_v1)
+```{r splist}
 
-bs_v2 <- fread(here::here('Data/biov2_fixednames.csv'))
-bs_v2$spp <- gsub("_"," ",bs_v2$sp_name_std_v2)
+splist <- read.csv(here::here("Data/splist.csv"), header = T)
+# remove duplicated sp_names
+splist <- splist %>%
+    dplyr::select(scientificName,kingdom,phylum,class,order,family,db) %>%
+    filter(!duplicated(scientificName))
+
 ```
+
+# Load bioshifts
+
+## Load v1
+
+```{r v1}
+biov1 <- read.csv(here::here("Data/biov1_fixednames.csv"), header = T)
+# Fix references in biov1
+biov1$Article_ID <- gsub("[^0-9.-]", "", biov1$Article_ID)
+biov1$Article_ID <- as.numeric(biov1$Article_ID)
+biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+biov1 <- biov1 %>%
+    dplyr::select(ID,Article_ID,Study_ID,Type,Param,Trend,SHIFT,UNIT,DUR,v.lat.mean,v.ele.mean,START,DUR,
+                  START,END,group,ECO,Sampling,Uncertainty_Distribution,Uncertainty_Parameter,
+                  Grain_size,Data,ID.area,
+                  Phylum,Class,Order,Family,Genus,sp_name_std_v1) %>% # select columns
+    mutate(
+        Type = case_when(
+            Type=="HOR" ~ "LAT",
+            TRUE ~ as.character(Type)),
+        Data = case_when(
+            Data=="occurence-based" ~ "occurrence-based",
+            TRUE ~ as.character(Data)),
+        Species = sp_name_std_v1) %>% 
+    mutate( # from m/year to km/year
+        kmyr = case_when(
+            UNIT == "m/year" ~ SHIFT/1000, 
+            UNIT == "km/year" ~ SHIFT, 
+            TRUE ~ NA_real_))
+
+biov1 <- biov1 %>%
+    filter(!is.na(sp_name_std_v1))
+
+biov1$spp <- biov1$sp_name_std_v1
+
+all(biov1$sp_name_std_v1 %in% splist$scientificName)
+
+```
+
+## Classify species
+
+```{r classify}
+
+# Class species as Terrestrial, Marine or Freshwater
+Terv1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "T")])
+Terrestrials = unique(c(Terv1))
+
+Mar1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "M")])
+Marine = unique(c(Mar1))
+
+# Freshwater fish
+FFishv1 <- unique(biov1$sp_name_std_v1[(biov1$Class == "Actinopterygii" | biov1$Class == "Cephalaspidomorphi") & biov1$ECO == "T"])
+FFish = unique(c(FFishv1))
+# Marine fish
+MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
+MFish = unique(c(MFishv1))
+
+splist$ECO = NA
+splist$ECO[which(splist$scientificName %in% Terrestrials)] <- "T"
+splist$ECO[which(splist$scientificName %in% Marine)] <- "M"
+splist$ECO[which(splist$scientificName %in% MFish)] <- "M"
+
+biov1$ECO = NA
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Terrestrials)] <- "T"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Marine)] <- "M"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% MFish)] <- "M"
+
+splist$Group = NA
+splist$Group[which(splist$class == "Phaeophyceae")] <- "Chromista"
+splist$kingdom[which(splist$class == "Phaeophyceae")] <- "Chromista"
+splist$Group[which(splist$phylum == "Rhodophyta")] <- "Seaweed"
+splist$kingdom[which(splist$phylum == "Rhodophyta")] <- "Plantae"
+splist$Group[which(splist$family == "Elminiidae")] <- "Barnacles"
+splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Aves")] <- "Bird"
+splist$Group[which(splist$class == "Insecta")] <- "Insect"
+splist$Group[which(splist$class == "Mammalia")] <- "Mammal"
+splist$Group[which(splist$class == "Arachnida")] <- "Spider"
+splist$kingdom[which(splist$kingdom == "Viridiplantae")] <- "Plantae"
+splist$kingdom[which(splist$phylum == "Tracheophyta")] <- "Plantae"
+splist$Group[which(splist$kingdom == "Plantae")] <- "Plant"
+splist$Group[which(splist$class == "Hydrozoa")] <- "Hydrozoa"
+splist$Group[which(splist$class == "Anthozoa")] <- "Sea anemones and corals"
+splist$Group[which(splist$class == "Polychaeta")] <- "Polychaetes"
+splist$Group[which(splist$phylum == "Mollusca")] <- "Molluscs"
+splist$Group[which(splist$class == "Malacostraca")] <- "Crustacean"
+splist$Group[which(splist$class == "Hexanauplia")] <- "Crustacean"
+splist$Group[which(splist$class == "Maxillopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Ostracoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Branchiopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Asteroidea")] <- "Starfish"
+splist$Group[which(splist$class == "Ascidiacea")] <- "Ascidians tunicates and sea squirts"
+splist$class[which(splist$class == "Actinopteri")] <- "Actinopterygii"
+splist$Group[which(splist$class == "Actinopterygii")] <- "Fish"
+splist$Group[which(splist$class == "Elasmobranchii")] <- "Fish"
+splist$Group[which(splist$order == "Perciformes")] <- "Fish"
+splist$Group[which(splist$class == "Chondrichthyes")] <- "Fish"
+splist$Group[which(splist$class == "Holocephali")] <- "Fish"
+splist$Group[which(splist$class == "Cephalaspidomorphi")] <- "Fish"
+splist$Group[which(splist$class == "Echinoidea")] <- "Sea urchin"
+splist$Group[which(splist$class == "Crinoidea")] <- "Crinoid"
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Reptilia")] <- "Reptile"
+splist$Group[which(splist$order == "Squamata")] <- "Reptile"
+splist$Group[which(splist$class == "Ophiuroidea")] <- "Brittle stars"
+splist$Group[which(splist$class == "Chilopoda")] <- "Centipedes"
+splist$Group[which(splist$class == "Diplopoda")] <- "Millipedes"
+splist$Group[which(splist$class == "Amphibia")] <- "Amphibian"
+splist$Group[which(splist$kingdom == "Fungi")] <- "Fungi"
+splist$Group[which(splist$order == "Balanomorpha")] <- "Barnacles"
+splist$Group[which(splist$phylum == "Nematoda")] <- "Nematodes"
+splist$Group[which(splist$class == "Myxini")] <- "Hagfish"
+splist$Group[which(splist$kingdom == "Chromista")] <- "Chromista"
+
+######################################
+biov1 <- merge(biov1[,-which(names(biov1) %in% c("Group","ECO"))], 
+               splist[,c("Group","ECO","scientificName")], 
+               by.x = "sp_name_std_v1", by.y = "scientificName", 
+               all.x = T)
+
+```
+
+## Filter LAT / ELE shifts
+
+```{r filter}
+
+# v1
+biov1 <- biov1 %>%
+    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+
+# splist
+sps <- unique(biov1$sp_name)
+splist <- splist %>% filter(scientificName %in% sps)
+
+```
+
+## Filter species identified to the genus level or cf.
+
+```{r clean}
+
+if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_reported_name_v1))
+}
+if(any(grep("sp[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_name_std_v1))
+}
+if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_reported_name_v1))
+}
+if(any(grep("cf[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_name_std_v1))
+}
+
+#remove freshwater fishes
+biov1 <- biov1[-which(biov1$Class == "Actinopterygii" & biov1$ECO=="T"),]
+
+#remove marine birds
+biov1 <- biov1[-which(biov1$Class == "Aves" & biov1$ECO=="M"),]
+
+
+if(any(grep("sp[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("sp[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
+}
+
+
+```
+
+## Reorganize methodological variables
+```{r v1}
+
+unique(biov1$Data)
+biov1$Data[biov1$Data=="occurence-based"] <- "occurrence-based"
+biov1$Data <- factor(biov1$Data, levels = unique(biov1$Data))
+table(biov1$Data)
+
+unique(biov1$Sampling)
+biov1$Sampling = ifelse(biov1$Sampling %in% c("IRR","MULTIPLE(continuous)"),"MULTIPLE", biov1$Sampling)
+biov1$Sampling <- ordered(biov1$Sampling, 
+                          levels = c("TWO","MULTIPLE","CONTINUOUS"))
+table(biov1$Sampling)
+
+unique(biov1$Grain_size)
+biov1$Grain_size <- ifelse(biov1$Grain_size %in% c("large","very_large"),"large",biov1$Grain_size)
+biov1$Grain_size <- ordered(biov1$Grain_size, 
+                            levels = c("small","moderate","large"))
+table(biov1$Grain_size)
+
+unique(biov1$Uncertainty_Distribution)
+biov1$Uncertainty_Distribution <- ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING","RESAMPLING(same)"),"RESAMPLING",
+                                         ifelse(biov1$Uncertainty_Distribution %in% c("MODEL","MODEL+RESAMPLING(same)","RESAMPLING+MODEL"),"MODEL",
+                                                ifelse(biov1$Uncertainty_Distribution %in% c("DETECTABILITY","RESAMPLING(same)+DETECTABILITY"),"DETECTABILITY",
+                                                       biov1$Uncertainty_Distribution)))
+biov1$Uncertainty_Distribution <- ifelse(biov1$Uncertainty_Distribution == "RAW","OPPORTUNISTIC","PROCESSED")  
+table(biov1$Uncertainty_Distribution)
+
+#transform study area
+biov1$ID.area <- log(biov1$ID.area)
+
+```
+
+## Direction of shift
+```{r v1}
+biov1 <- biov1 %>%
+    mutate(shift_sign = ifelse(SHIFT>0,"pos","neg"),
+           velocity = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
+           vel_sign = ifelse(velocity>0,"pos","neg"),
+           shift_vel_sign = paste0(shift_sign,vel_sign))
+
+ggplot(biov1, aes(x=shift_vel_sign))+
+    geom_bar()+
+    coord_flip()+
+    facet_wrap(Type~Param)
+
+```
+
+## Get centroids of study areas
+This will be used to merge genetic data with bioshifts based on distance of observations
+```{r v1}
+# # The input file geodatabase
+# fgdb <- "C:/Users/brunn/NextCloud/Bioshifts/Study_Areas.gdb"
+# 
+# # List all feature classes in a file geodatabase
+# fc_list <- ogrListLayers(fgdb)
+# 
+# # Get centroids
+# cl <- makeCluster(detectCores()-1)
+# clusterExport(cl, c("readOGR", "gCentroid", "fgdb"))
+# 
+# centroids <- pblapply(fc_list, function(x){
+#     fc <- readOGR(dsn=fgdb,layer=x)
+#     c <- gCentroid(fc)
+#     data.frame(c)
+# }, cl = cl)
+# 
+# stopCluster(cl)
+# 
+# centroids <- do.call("rbind",centroids)
+# centroids$ID <- fc_list
+# 
+# write.csv(centroids, "Data/centroids_study_areas.csv", row.names = FALSE)
+
+centroids <- read.csv(here::here("Data/centroids_study_areas.csv"))
+names(centroids) <- c("lat","long","ID")
+
+biov1 <- merge(biov1, centroids, by = "ID")
+
+```
+
+# Calculated residual from shifts
+## Full model
+```{r shift_res_full, fig.width=5, fig.height=5}
+
+# biov1 %>%
+#     group_by(Grain_size) %>%
+#     summarise(mean(ID.area))
+# # One observation in bioshifts has no grain data
+# 
+# #transforming continuous method variables in qualitative variables => two benefits: (1) all variables area qualitative (2) better than quantitative in case the effect is not linear
+# q1=quantile(biov1$START,probs=c(0,0.25,0.5,0.75,1))
+# biov1$StartF=cut(biov1$START,breaks=q1,include.lowest=T)
+# 
+# q1=quantile(biov1$ID.area,probs=c(0,0.25,0.5,0.75,1))
+# biov1$ID.areaF=cut(biov1$ID.area,breaks=q1,include.lowest=T)
+# 
+# q1=quantile(biov1$DUR,probs=c(0,0.25,0.5,0.75,1))
+# biov1$DURF=cut(biov1$DUR,breaks=q1,include.lowest=T)
+# 
+# biov1$Grain_sizeF <- as.numeric(biov1$Grain_size)
+# 
+# #MODELS with methods only
+# meth <- biov1[,names(biov1) %in% c("Param","Data","Sampling","Grain_size","Uncertainty_Distribution","Uncertainty_Parameter","START","DUR","ID.area")] #remove "n" as can capture diversity gradients
+# 
+# meth <- na.omit(meth)
+# 
+# biov1$Grain_size <- as.numeric(biov1$Grain_size)
+# 
+# # convert factors to numeric
+# meth[,names(meth) %in% c("ID","ID.areaF","DURF","StartF","Param","Data","Sampling","Uncertainty_Distribution","Uncertainty_Parameter","Grain_size")] <- apply(meth[,names(meth) %in% c("ID","ID.areaF","DURF","StartF","Param","Data","Sampling","Uncertainty_Distribution","Uncertainty_Parameter","Grain_size")],2,function(x) as.numeric(factor(x)))
+# cormat <- cor(meth)
+# corrplot::corrplot(cormat)
+# #id.area and grain size are correlated so pick only area
+# #start and duration are correlated so pick only dur
+# # Or, we can use categorical version of variables
+# 
+# # My models
+# # categorical version of continual variables + random effects (ID + taxa)
+# # issue1: do we want to account for taxonomy?
+# # issue2: Is ID redundant with methodological variables?
+# model1 <- "SHIFT ~ Param + DURF + StartF + ID.areaF + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution + (1|spp) + (1|ID)"
+# # continuous variables + random effects (ID + taxa)
+# # issue1: do we want to account for taxonomy?
+# # issue2: Is ID redundant with methodological variables?
+# model2 <- "SHIFT ~ Param + DUR + START + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution + (1|spp) + (1|ID)"
+# # continuous variables + random effects (ID + taxa)
+# # issue1: do we want to account for taxonomy?
+# # issue2: Is ID redundant with methodological variables?
+# model3 <- "SHIFT ~ DUR + START + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution"
+# 
+# model3 <- "SHIFT ~ Param + (1|ID) + (1|spp)"
+# model4 <- "SHIFT ~ DUR + START + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution"
+# 
+# # Latitude
+# my_vars <- c("spp","SHIFT","velocity","Class","Family","Genus","Group","shift_vel_sign","lat","long",
+#              "ID","Type","Param","Data","Sampling","Grain_size","Uncertainty_Distribution","Uncertainty_Parameter","START","DUR","ID.area","DURF","StartF","ID.areaF")
+# 
+# data.lat <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "LAT") %>%
+#     na.omit
+# 
+# # add random variation to longlat
+# noise = rnorm(nrow(data.lat),0,0.0001)
+# data.lat$lat = data.lat$lat+noise
+# data.lat$long = data.lat$long+noise
+# 
+# mod.meth.lat3 <- lmer(model3,
+#                      REML=TRUE,na.action="na.fail",
+#                      control = lmerControl(optimizer ='optimx', 
+#                                            optCtrl=list(method='nlminb')),
+#                      data = data.lat)
+# MuMIn::r.squaredGLMM(mod.meth.lat3)
+# # m1
+# # R2m       R2c
+# # 0.00451421 0.8754512
+# 
+# # m2
+# # R2m       R2c
+# # 0.001147401 0.873946
+# 
+# # m3
+# # R2m       R2c
+# # 0.1844739 0.9681493
+# 
+# AIC(mod.meth.lat)
+# 
+# mod.meth.lat <- gls(as.formula(model4),
+#                     correlation = corSpatial(form = ~ long+lat),
+#                     method = "REML",na.action="na.fail",
+#                     control = glsControl(opt  = 'nlminb'),
+#                     data = data.lat)
+# MuMIn::r.squaredGLMM(mod.meth.lat)
+# 
+# # summary(mod.meth.lat)
+# 
+# # inspect residuals
+# plot(mod.meth.lat)
+# 
+# predicted.shift <- residuals(mod.meth.lat)
+# 
+# nrow(data.lat)
+# length(predicted.shift)
+# 
+# data.lat$shift_corrected <- predicted.shift
+# 
+# # Elevation
+# 
+# # shift
+# data.ele <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "ELE") %>%
+#     na.omit
+# 
+# mod.meth.ele <- lmer(model3,
+#                      REML=TRUE,na.action="na.fail",
+#                      control = lmerControl(optimizer ='optimx', 
+#                                            optCtrl=list(method='nlminb')),
+#                      data = data.ele)
+# MuMIn::r.squaredGLMM(mod.meth.ele)
+# # m1
+# # R2m       R2c
+# # 0.02026562 0.1396005
+# 
+# # m2
+# # R2m       R2c
+# # 0.009871563 0.1304724
+# 
+# # m3
+# # R2m       R2c
+# # 0.06902197 0.1877013
+# 
+# AIC(mod.meth.ele)
+# 
+# # summary(mod.meth.lat)
+# 
+# # inspect residuals
+# plot(mod.meth.ele)
+# 
+# predicted.shift <- residuals(mod.meth.ele)
+# 
+# nrow(data.ele)
+# length(predicted.shift)
+# 
+# data.ele$shift_corrected <- predicted.shift
+# 
+# # Merge
+# biov1_new <- rbind(data.lat,data.ele)
+
+```
+## Correlation between raw and corrected shifts
+
+```{r cor_model_full, fig.width=10, fig.height=3}
+
+# {
+#     par(mfrow = c(1,3))
+#     plot(shift_corrected~SHIFT, 
+#          biov1_new %>% filter(Type == "LAT"),
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          main = "Latitude data")
+#     plot(shift_corrected~SHIFT, 
+#          biov1_new %>% filter(Type == "ELE"), 
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          main = "Elevation data")
+#     plot(shift_corrected~SHIFT, 
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          biov1_new, 
+#          main = "Full data")
+# }
+```
+
+Inspecting the residuals of the full models vs the subset models, it seems the residuals tend of the 
+
+## Subset models
+```{r shift_res_subset, fig.width=5, fig.height=5}
+
+# # Latitude
+# # LE
+# data.lat.le <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "LAT") %>%
+#     filter(Param == "LE") %>%
+#     na.omit
+# 
+# mod.meth.lat.le <- lmer(model3,
+#                         REML=TRUE,na.action="na.fail",
+#                         control = lmerControl(optimizer ='optimx', 
+#                                               optCtrl=list(method='nlminb')),
+#                         data = data.lat.le)
+# MuMIn::r.squaredGLMM(mod.meth.lat.le)
+# # R2m       R2c
+# # 0.2191011 0.3706496
+# 
+# AIC(mod.meth.lat.le)
+# 
+# # summary(mod.meth.lat.le)
+# 
+# # inspect residuals
+# plot(mod.meth.lat.le)
+# 
+# predicted.shift <- residuals(mod.meth.lat.le)
+# 
+# nrow(data.lat.le)
+# length(predicted.shift)
+# 
+# data.lat.le$shift_corrected <- predicted.shift
+# 
+# # TE
+# data.lat.te <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "LAT") %>%
+#     filter(Param == "TE") %>%
+#     na.omit
+# 
+# mod.meth.lat.te <- lmer(model3,
+#                         REML=TRUE,na.action="na.fail",
+#                         control = lmerControl(optimizer ='optimx', 
+#                                               optCtrl=list(method='nlminb')),
+#                         data = data.lat.te)
+# MuMIn::r.squaredGLMM(mod.meth.lat.te)
+# # R2m       R2c
+# # 0.3411776 0.9877747
+# 
+# AIC(mod.meth.lat.te)
+# 
+# # summary(mod.meth.lat.te)
+# 
+# # inspect residuals
+# plot(mod.meth.lat.te)
+# 
+# predicted.shift <- residuals(mod.meth.lat.te)
+# 
+# nrow(data.lat.te)
+# length(predicted.shift)
+# 
+# data.lat.te$shift_corrected <- predicted.shift
+# 
+# # O
+# data.lat.o <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "LAT") %>%
+#     filter(Param == "O") %>%
+#     na.omit
+# 
+# mod.meth.lat.o <- lmer(model3,
+#                        REML=TRUE,na.action="na.fail",
+#                        control = lmerControl(optimizer ='optimx', 
+#                                              optCtrl=list(method='nlminb')),
+#                        data = data.lat.o)
+# MuMIn::r.squaredGLMM(mod.meth.lat.o)
+# # R2m       R2c
+# # 0.2745957 0.9725265
+# 
+# AIC(mod.meth.lat.o)
+# 
+# # summary(mod.meth.lat.o)
+# 
+# # inspect residuals
+# plot(mod.meth.lat.o)
+# 
+# predicod.shift <- residuals(mod.meth.lat.o)
+# 
+# nrow(data.lat.o)
+# length(predicod.shift)
+# 
+# data.lat.o$shift_corrected <- predicod.shift
+# 
+# # Elevation
+# 
+# # LE
+# data.ele.le <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "ELE") %>%
+#     filter(Param == "LE") %>%
+#     na.omit
+# 
+# mod.meth.ele.le <- lmer(model3,
+#                         REML=TRUE,na.action="na.fail",
+#                         control = lmerControl(optimizer ='optimx', 
+#                                               optCtrl=list(method='nlminb')),
+#                         data = data.ele.le)
+# MuMIn::r.squaredGLMM(mod.meth.ele.le)
+# # R2m       R2c
+# # 0.05451751 0.0724277
+# 
+# AIC(mod.meth.ele.le)
+# 
+# # summary(mod.meth.ele.le)
+# 
+# # inspect residuals
+# plot(mod.meth.ele.le)
+# 
+# predicted.shift <- residuals(mod.meth.ele.le)
+# 
+# nrow(data.ele.le)
+# length(predicted.shift)
+# 
+# data.ele.le$shift_corrected <- predicted.shift
+# 
+# # TE
+# data.ele.te <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "ELE") %>%
+#     filter(Param == "TE") %>%
+#     na.omit
+# 
+# mod.meth.ele.te <- lmer(model3,
+#                         REML=TRUE,na.action="na.fail",
+#                         control = lmerControl(optimizer ='optimx', 
+#                                               optCtrl=list(method='nlminb')),
+#                         data = data.ele.te)
+# MuMIn::r.squaredGLMM(mod.meth.ele.te)
+# # R2m       R2c
+# # 0.07846136 0.597949
+# 
+# AIC(mod.meth.ele.te)
+# 
+# # summary(mod.meth.ele.te)
+# 
+# # inspect residuals
+# plot(mod.meth.ele.te)
+# 
+# predicted.shift <- residuals(mod.meth.ele.te)
+# 
+# nrow(data.ele.te)
+# length(predicted.shift)
+# 
+# data.ele.te$shift_corrected <- predicted.shift
+# 
+# # O
+# data.ele.o <- biov1 %>%
+#     select(my_vars) %>%
+#     filter(Type == "ELE") %>%
+#     filter(Param == "O") %>%
+#     na.omit
+# 
+# mod.meth.ele.o <- lmer(model3,
+#                        REML=TRUE,na.action="na.fail",
+#                        control = lmerControl(optimizer ='optimx', 
+#                                              optCtrl=list(method='nlminb')),
+#                        data = data.ele.o)
+# MuMIn::r.squaredGLMM(mod.meth.ele.o)
+# # R2m       R2c
+# # 0.05301482 0.1656916
+# 
+# AIC(mod.meth.ele.o)
+# 
+# # summary(mod.meth.ele.o)
+# 
+# # inspect residuals
+# plot(mod.meth.ele.o)
+# 
+# predicod.shift <- residuals(mod.meth.ele.o)
+# 
+# nrow(data.ele.o)
+# length(predicod.shift)
+# 
+# data.ele.o$shift_corrected <- predicod.shift
+# 
+# 
+# # Merge
+# biov1_new2 <- rbind(data.lat.le,
+#                     data.lat.o,
+#                     data.lat.te,
+#                     data.ele.le,
+#                     data.ele.o,
+#                     data.ele.te)
+# 
+# # nrow(biov1 %>% filter(shift_sign == "neg"))
+# # 
+# # 
+# # a=c(1:1000)
+# # noise=rnorm(length(a), 0.0001, 0.0001)
+# # noise=rnorm(length(a), 0, 0.0001)
+# # hist(noise)
+# # test <- data.frame(a, b=rev(a)+noise, c=a)
+# # 
+# # plot(test$a,test$b)
+# # 
+# # m <- lm(a~b,test)
+# # plot(m)
+# # summary(m)
+# # 
+# # resm <- residuals(m)
+# # hist(resm)
+# # 
+# # plot(test$a,round(resm,5))
+# # 
+# # plot(noise, resm)
+# # plot(test$a,test$b)
+# # lines(test$a, test$a)
+
+```
+
+## Correlation between raw and corrected shifts
+
+```{r cor_model_subset, fig.width=10, fig.height=3}
+
+# {
+#     par(mfrow = c(1,3))
+#     plot(shift_corrected~SHIFT, 
+#          biov1_new2 %>% filter(Type == "LAT"),
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          main = "Latitude data")
+#     plot(shift_corrected~SHIFT, 
+#          biov1_new2 %>% filter(Type == "ELE"), 
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          main = "Elevation data")
+#     plot(shift_corrected~SHIFT, 
+#          ylab = "Predicted shift",
+#          xlab = "Observed shift",
+#          biov1_new2, 
+#          main = "Full data")
+# }
+
+
+```
+## Select the database
+Based on the dispersion of the observed vs residual shifts, both modelling approaches seem similar. I will then select the more simple modelling approach
+```{r}
+# biov1 = biov1_new
+```
+
+# Calculate lags 
+
+```{r lags}
+
+# calculate lags
+# positive values are a lag (range shift lower smaller than expected or in opposite directions) and negative values are range shift larger than expected
+biov1$lag <- biov1$velocity-biov1$SHIFT
+position = which(biov1$vel_sign == "neg")
+biov1$lag[position] <- biov1$lag[position] * -1 # Any negative velocity means the sign of lag has to shift.
+
+# Lag 2
+# calculate lags based on "corrected" shifts
+# biov1$lag2 <- biov1$velocity-biov1$shift_corrected
+# position = which(biov1$vel_sign == "neg")
+# biov1$lag2[position] <- biov1$lag2[position] * -1 # Any negative velocity means the sign of lag has to shift.
+
+# Lag 3
+# When shift is in opposite sign of velocity, lag == velocity
+biov1$lag3 = biov1$lag
+position <- which(biov1$shift_vel_sign == "posneg" | biov1$shift_vel_sign == "negpos")
+biov1$lag3[position] <- biov1$velocity[position]
+
+# Lag 4
+# apply lag 3 to lag 2
+# biov1$lag4 = biov1$lag2
+# position <- which(biov1$shift_vel_sign == "posneg" | biov1$shift_vel_sign == "negpos")
+# biov1$lag4[position] <- biov1$velocity[position]
+
+
+# {
+#     par(mfrow=c(2,2))
+#     plot(lag~velocity, biov1)
+#     plot(lag2~velocity, biov1)
+#     plot(lag3~velocity, biov1)
+#     plot(lag4~velocity, biov1)
+# }
+# 
+# ggplot() +
+#     geom_density(data = biov1, aes(x = lag), fill = "blue", color = "blue", alpha = .2) +
+#     geom_density(data = biov1, aes(x = lag2), fill = "red", color = "red", alpha = .2) +
+#     geom_density(data = biov1, aes(x = lag3), fill = "green", color = "green", alpha = .2) +
+#     geom_density(data = biov1, aes(x = lag4), fill = "yellow", color = "yellow", alpha = .2)
+
+ggplot(biov1 %>%
+           filter(shift_vel_sign == 'pospos'), 
+       aes(x=abs(lag3), fill = Param, color = Param))+
+    geom_histogram(alpha = .5)+
+    facet_wrap(.~Type)
+
+```
+
+
 
 # Load genetic data
 
-```{r gen_data}
+```{r gen_data, eval=FALSE}
+
+# Genetic diversity
 mt <- fread(here::here('Data/mtdna.csv'))
+mt$spp <- Clean_Names(mt$spp)
+
 ms <- fread(here::here('Data/msat.csv'))
+ms$spp <- Clean_Names(ms$spp)
+
 gen_d <- fread(here::here('Data/Deposited_data_genetic_diversity_dekort2021.csv'))
 gen_d$spp <-  gsub("_"," ",gen_d$Species)
-gen_lf <- fread(here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020.csv'))
+gen_d$spp <- Clean_Names(gen_d$spp)
+
+gen_lf <- read_excel(here::here("Data/MacroPopGen_Database_final-v0.2.xlsx"), sheet = "MacroPopGen_Database")
 gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
+gen_lf$spp <- Clean_Names(gen_lf$spp)
+
+# Phenotypic rates
+pheno <- fread(here::here('Data/PROCEEDv6_RatesDB.csv'))
+pheno$spp <- Clean_Names(pheno$sp_ncbi)
+
+length(unique(gen_d$spp))
+length(unique(gen_lf$spp))
+length(unique(mt$spp))
+length(unique(ms$spp))
+length(unique(pheno$spp))
 
 ```
 
 ## Stats
 
-```{r}
+```{r stats_gen, eval=FALSE}
 
+# Gen
 gen_sps <- unique(c(mt$spp, ms$spp, gen_d$spp, gen_lf$spp))
 
-bsi_v1 <- intersect(bs_v1$spp, gen_sps)
-bsi_v2 <- intersect(bs_v2$spp, gen_sps)
-
-bsi_tot <- union(bsi_v1,bsi_v2)
+bsi_v1 <- intersect(biov1$spp, gen_sps)
+bsi_v2 <- intersect(biov2$spp, gen_sps)
+bsi_v3 <- intersect(biov3$spp, gen_sps)
 
 # Break down
-
 tot1 <- data.frame(N_species_with_gen_data = length(gen_sps),
                    v1_matches = length(bsi_v1),
                    v2_matches = length(bsi_v2),
-                   v3_matches = length(bsi_tot))
+                   v3_matches = length(bsi_v3))
 tot1
+
+# phenotypic
+phen_sps <- unique(pheno$spp)
+
+bsj_v1 <- intersect(biov1$spp, phen_sps)
+bsj_v2 <- intersect(biov2$spp, phen_sps)
+bsj_v3 <- intersect(biov3$spp, phen_sps)
+
+# Break down
+tot2 <- data.frame(N_species_with_gen_data = length(phen_sps),
+                   v1_matches = length(bsj_v1),
+                   v2_matches = length(bsj_v2),
+                   v3_matches = length(bsj_v3))
+tot2
+
 ```
 
-There are `r length(gen_sps)` species with gen data before fixing sci names.
 
-`r length(bsi_v1)` species match with bioshifts v1 before fixing sci names.
+## Fix names at the genetic data
 
-`r length(bsi_v2)` species match with bioshifts v2 before fixing sci names.
+```{r fixnames, eval=FALSE}
 
-`r length(bsi_tot)` species match before fixing sci names.
-
-# Fix names at the genetic data
-
-```{r}
 # Species to find
-
 mycols <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
-splist <- data.frame(matrix(ncol = length(mycols), nrow = length(gen_sps)))
+splist <- data.frame(matrix(ncol = length(mycols), nrow = length(unique(c(gen_sps,phen_sps)))))
 names(splist) <- mycols
 
-splist$reported_name_fixed <- gen_sps
+splist$reported_name_fixed <- unique(c(gen_sps,phen_sps))
 tofind_ <- splist[which(is.na(splist$scientificName)),]
 tofind_ <- unique(tofind_$reported_name_fixed)
 
@@ -96,65 +881,17 @@ tofind <- data.frame(species = tofind_, tofind)
 tofind <- tofind %>%
     mutate(across(everything(), as.character))
 
-
-
-## GBIF
-togo <- tofind[which(is.na(tofind$scientificName)),]
-
-mycols <- c("speciesKey", "kingdom","phylum","class","order","family", "species")
-
 # retrieve sp names
-cl <- makeCluster(detectCores()-2)
-clusterExport(cl, c("togo","standardize_taxa"))
-
-gbif_names <- pblapply(togo$species, function(x){
-    try(standardize_taxa(data.frame(verbatimScientificName = x), 
-                         fuzzy = FALSE,
-                         silent = TRUE))
-}, cl = cl)
-
-stopCluster(cl)
-
-rem <- sapply(gbif_names, class)
-if(any(rem=="try-error")){
-    rem <- which(rem=="try-error")
-    gbif_names <- gbif_names[-rem]
-}
-gbif_names <- rbindlist(gbif_names)
-
-if(any(is.na(gbif_names$scientificName))){
-    gbif_names <- gbif_names[-which(is.na(gbif_names$scientificName)),]
-}
-gbif_names <- gbif_names[which(gbif_names$taxonRank=='species'),]
-
-# remove duplicates
-if(any(duplicated(gbif_names$verbatimScientificName))){
-    gbif_names <- gbif_names[-which(duplicated(gbif_names$verbatimScientificName)),]
-}
-
-any(!gbif_names$original_search %in% splist$species)
-
-cat("--- Summary ---\n",
-    "N taxa:",nrow(togo),"\n",
-    "N taxa found:",nrow(gbif_names), "\n",
-    "N taxa not found:", nrow(togo)-nrow(gbif_names))
-
-gbif_names <- gbif_names[,c("verbatimScientificName","scientificName","kingdom","phylum","class","order","family","taxonID")]
-names(gbif_names) <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
-gbif_names$db <- "gbif"
-gbif_names$db_code <- gsub("http://www.gbif.org/species/","",gbif_names$db_code)
-gbif_names$db_code <- paste("GBIF:",gbif_names$db_code,sep = "")
+sp_names_found <- Find_Sci_Names(spnames = tofind$species)
 
 # Feed
 tofind <- tofind %>% 
-    rows_patch(gbif_names, 
+    rows_patch(sp_names_found, 
                by = "species")
 
 gc()
 
 ## Add found species names to the splist
-
-
 all(tofind$species %in% splist$reported_name_fixed)
 
 if(any(is.na(tofind$scientificName))){
@@ -162,7 +899,6 @@ if(any(is.na(tofind$scientificName))){
 } else {
     found = tofind
 }
-
 
 for(i in 1:length(found$species)){
     tofill <- unique(which(splist$reported_name_fixed == found$species[i]))
@@ -176,11 +912,11 @@ for(i in 1:length(found$species)){
     splist$db_code[tofill] <- found$db_code[i]
 }
 
-any(!splist$scientificName == splist$reported_name_fixed)
-
 splist$spp = splist$reported_name_fixed
 
-### Fix names
+# Keep original names for those species we could not find a name at GBIF
+pos <- which(is.na(splist$scientificName))
+splist$scientificName[pos] <- splist$spp[pos]
 
 any(!mt$spp %in% gen_sps)
 any(!mt$spp %in% splist$spp)
@@ -194,7 +930,6 @@ any(!gen_d$spp %in% splist$spp)
 any(!gen_lf$spp %in% gen_sps)
 any(!gen_lf$spp %in% splist$spp)
 
-
 for(i in 1:nrow(mt)){
     mt$spp_new[i] <- splist$scientificName[which(splist$spp == mt$spp[i])]
 }
@@ -207,187 +942,1292 @@ for(i in 1:nrow(gen_d)){
 for(i in 1:nrow(gen_lf)){
     gen_lf$spp_new[i] <- splist$scientificName[which(splist$spp == gen_lf$spp[i])]
 }
+for(i in 1:nrow(gen_lf)){
+    pheno$spp_new[i] <- splist$scientificName[which(splist$spp == pheno$spp[i])]
+}
+
+write.csv(mt, 
+          here::here('Data/mtdna_harmo.csv'), row.names = FALSE)
+write.csv(ms, 
+          here::here('Data/msat_harmo.csv'), row.names = FALSE)
+write.csv(gen_d, 
+          here::here('Data/Deposited_data_genetic_diversity_dekort2021_harmo.csv'), row.names = FALSE)
+write.csv(gen_lf, 
+          here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'), row.names = FALSE)
+write.csv(pheno, 
+          here::here('Data/PROCEEDv6_RatesDB_harmo.csv'), row.names = FALSE)
+
+```
+
+# Load harmonized datasets
+
+```{r load_harmonized_gen}
+
+mt <- fread(here::here('Data/mtdna_harmo.csv'))
+ms <- fread(here::here('Data/msat_harmo.csv'))
+gen_d <- fread(here::here('Data/Deposited_data_genetic_diversity_dekort2021_harmo.csv'))
+gen_d$spp <-  gsub("_"," ",gen_d$Species)
+gen_lf <- fread(here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'))
+gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
+pheno <- fread(here::here('Data/PROCEEDv6_RatesDB_harmo.csv'))
+pheno$spp <-  gsub("_"," ",pheno$sp_ncbi)
+
 ```
 
 ## Stats
 
 ```{r}
-gen_sps <- unique(c(mt$spp_new, ms$spp_new, gen_d$spp_new, gen_lf$spp_new))
 
-bsi_v1 <- intersect(bs_v1$spp, gen_sps)
-bsi_v2 <- intersect(bs_v2$spp, gen_sps)
+# Gen
+gen_sps <- unique(c(mt$spp, ms$spp, gen_d$spp, gen_lf$spp))
 
-bsi_tot <- union(bsi_v1,bsi_v2)
-
-length(gen_sps) # 1821 spp with gen data after fixing sci names
-
-length(bsi_v1) # 345 species match with bioshifts v1 after fixing sci names
-length(bsi_v2) # 351 species match with bioshifts v2 after fixing sci names
-length(bsi_tot) # 395 species match after fixing sci names
+bsi_v1 <- intersect(biov1$spp, gen_sps)
 
 # Break down
+tot1 <- data.frame(N_species_with_gen_data = length(gen_sps),
+                   v1_matches = length(bsi_v1))
+tot1
 
-tot2 <- data.frame(N_species_with_gen_data = length(gen_sps),
-                   v1_matches = length(bsi_v1),
-                   v2_matches = length(bsi_v2),
-                   v3_matches = length(bsi_tot))
+# phenotypic
+phen_sps <- unique(pheno$spp)
 
-total <- data.frame(cbind(t(tot1),t(tot2)))
-names(total) <- c("Before_tax_harmonization","After_tax_harmonization")
-total
+bsj_v1 <- intersect(biov1$spp, phen_sps)
+
+# Break down
+tot2 <- data.frame(N_species_with_pheno_data = length(phen_sps),
+                   v1_matches = length(bsj_v1))
+tot2
+
 ```
 
-# Which species
+## Explore distribution
 
 ```{r}
 
-toplot = data.frame(table(splist$class))
+# Malin
+ggplot(mt, aes(He)) +
+    geom_histogram()
 
-ggplot(toplot, aes(x = Var1, y = Freq))+
+ggplot(ms, aes(He)) +
+    geom_histogram()
+
+# De Kort
+ggplot(gen_d, aes(GDp)) +
+    geom_histogram()
+# Why De Kort data has the two peaks? It is due to the marker type
+ggplot(gen_d, aes(GDp)) +
+    geom_histogram()+
+    facet_grid(.~Marker)
+# But if we look at the normalized GDp, the problem is solved. Therefore, we should be using the normalized version of GDp from DeKort
+ggplot(gen_d, aes(GDp_norm)) +
+    geom_histogram()
+
+# Lawrence & Fraser
+ggplot(gen_lf, aes(as.numeric(He))) +
+    geom_histogram()
+
+```
+
+# Create a single genetic diversity dataset
+
+```{r}
+
+transform01 <- function(x) (x * (length(x) - 1) + 0.5) / (length(x))
+
+# vec<-rnorm(100)+abs(min(vec))
+# vec<-vec+min(vec)
+# 
+# hist(vec)
+# hist(transform01(vec))
+
+# Malin
+mt_sub <- mt  %>%
+    mutate(long = as.numeric(lon),
+           lat = as.numeric(lat),
+           N = as.numeric(n), # Sample size
+           Marker = "Mitochondrial") %>% 
+    select(spp, He, long, lat, N, Marker) %>%
+    filter(!is.na(He) | !He==0)
+mt_sub$Source = "Malin"
+mt_sub$Het_type = "He"
+
+ms_sub <- ms %>%
+    mutate(long = as.numeric(lon),
+           lat = as.numeric(lat),
+           N = as.numeric(n), # Sample size
+           Marker = "Microsatellite") %>% 
+    select(spp, He, long, lat, N, Marker) %>%
+    filter(!is.na(He) | !He==0)
+ms_sub$Source = "Malin"
+ms_sub$Het_type = "He"
+
+###################
+# De Kort
+
+# Jonathan R.:
+# co-dominant refers to the fact that you can distinguish homozigous and heterozygous individuals, such as microsatellites
+# dominant means that you either have the detection of the marker or not. but you don’t know if the individual is heterozygous or not, such as AFLP
+# restriction enzymes are proteins that you use to cut the genomes into fragments. there are used for AFLP and allozymes, so not sure
+
+# De Kort code for Marker:
+# CD = Co-dominant
+# D = Dominant
+# ENZ = Enzime
+
+gen_d_sub <- gen_d %>%
+    mutate(long = as.numeric(LONGITUDE),
+           lat = as.numeric(LATITUDE),
+           spp = spp_new, 
+           He = as.numeric(GDp),
+           N = as.numeric(SampleSize), # Sample size
+           Marker = case_when(
+               Marker=="CD" ~ "Microsatellite",
+               Marker=="D" ~ "AFLP",
+               Marker=="ENZ" ~ "AFLP",
+               TRUE ~ as.character(Marker))) %>% 
+    select(spp, He, long, lat, N, Marker) %>%
+    filter(!is.na(He) | !He==0) %>%
+    filter(!(Marker == "AFLP" & He > .5)) # AFLPs > 0.5 are errors
+gen_d_sub$Source = "De Kort"
+gen_d_sub$Het_type = "He"
+
+# How DeKort calculated the normalized version of GDp
+# gen_d_sub$He_harm <- NA
+# 
+# m <- unique(gen_d_sub$Marker)
+# for(i in 1:length(m)){
+#     pos <- which(gen_d_sub$Marker == m[i])
+#     gen_d_sub$He_harm[pos] <-  scale(gen_d_sub$He[pos])
+# }
+# gen_d_sub$He_harm <-  (gen_d_sub$He_harm - min(gen_d_sub$He_harm))/(max(gen_d_sub$He_harm)-min(gen_d_sub$He_harm))
+
+###################
+# Lawrence & Fraser
+gen_lf_sub <- gen_lf %>%
+    mutate(long = as.numeric(Long),
+           lat = as.numeric(Lat),
+           He = as.numeric(He),
+           Ho = as.numeric(Ho),
+           spp = spp_new,
+           N = as.numeric(n), # Sample size
+           Marker = "Microsatellite") %>% 
+    select(spp, He, Ho, long, lat, N, Marker) %>%
+    filter((!is.na(He) & !is.na(Ho)) | !He==0 | !Ho==0)
+gen_lf_sub$Source = "Lawrence & Fraser"
+gen_lf_sub$Het_type = "He"
+pos <- which(is.na(gen_lf_sub$He))
+gen_lf_sub$He[pos] <- gen_lf_sub$Ho[pos]
+gen_lf_sub$Het_type[pos] = "Ho"
+gen_lf_sub <- gen_lf_sub %>% select(spp, He, Source, Het_type, long, lat, N, Marker)
+gen_lf_sub <- gen_lf_sub %>%
+    filter(He < 1)
+
+###################
+# Phenotypic rates
+pheno_rate <- pheno %>%
+    mutate(long = as.numeric(sample1.longitude),
+           lat = as.numeric(sample1.latitude),
+           trait1 = as.numeric(mean1),
+           trait2 = as.numeric(mean2),
+           spp = spp_new,
+           Trait = trait_type, 
+           Years = as.numeric(years),
+           Gen = as.numeric(generations)) %>% 
+    select(spp, long, lat, Trait, trait1, trait2, Years, Gen) %>%
+    filter(!is.na(trait1) & !is.na(trait2))
+pheno_rate$Source = "PROCEED"
+
+## Calculate rate
+for(i in 1:nrow(pheno_rate)){
+    sppi <- pheno_rate$spp[i]
+    traiti <- pheno_rate$Trait[i]
+    pos_spp_trait_i <- which(pheno_rate$spp == sppi & pheno_rate$Trait == traiti)
+    pheno_rate$PR1[i] <- (pheno_rate$trait2[i] - pheno_rate$trait1[i]) / mean(c(pheno_rate$trait2[pos_spp_trait_i], pheno_rate$trait1[pos_spp_trait_i])) * pheno_rate$Years[i]
+    pheno_rate$PR2[i] <- (pheno_rate$trait2[i] - pheno_rate$trait1[i]) / sqrt(mean(c(pheno_rate$trait2[pos_spp_trait_i], pheno_rate$trait1[pos_spp_trait_i])))^2 * pheno_rate$Years[i]
+}
+
+###################
+# Group all
+gen_div <- rbind(mt_sub %>% select(names(mt_sub)), 
+                 ms_sub %>% select(names(mt_sub)),
+                 gen_d_sub %>% select(names(mt_sub)),
+                 gen_lf_sub %>% select(names(mt_sub)))
+gen_div <- na.omit(gen_div)
+
+# View(gen_div %>%
+#          group_by(spp) %>%
+#          tally()) 
+
+###################
+# Harmonize following DeKort
+# 1) scale values at each marker type
+# 2) standardize (x - min)/(max-min)
+
+gen_div$He_harm <- NA
+gen_div$He_harm2 <- NA
+
+m <- unique(gen_div$Marker)
+for(i in 1:length(m)){
+    pos <- which(gen_div$Marker == m[i])
+    my_x <- scale(gen_div$He[pos])
+    gen_div$He_harm[pos] <- (my_x - min(my_x, na.rm = T))/(max(my_x, na.rm = T)-min(my_x, na.rm = T))
+    gen_div$He_harm2[pos] <-  transform01(gen_div$He[pos])
+}
+
+pheno_rate$PR_harm <- NA
+
+m <- unique(pheno_rate$Trait)
+for(i in 1:length(m)){
+    pos <- which(pheno_rate$Trait == m[i])
+    my_x <- scale(pheno_rate$PR1[pos])
+    pheno_rate$PR_harm[pos] <-  (my_x - min(my_x, na.rm = T))/(max(my_x, na.rm = T)-min(my_x, na.rm = T))
+}
+
+# gen_div %>%
+#     group_by(spp) %>%
+#     tally() %>%
+#     summary()
+
+```
+
+## Explore distribution of He
+
+```{r}
+
+# Full dataset
+ggplot(gen_div, aes(He)) +
+    geom_histogram()
+
+ggplot(gen_div, aes(He_harm)) +
+    geom_histogram()
+
+ggplot(gen_div, aes(He_harm2)) +
+    geom_histogram()
+
+# Compare sources
+ggplot(gen_div, aes(He)) +
+    geom_histogram() +
+    facet_wrap(.~Source, scales = "free_y")
+
+ggplot(gen_div, aes(He_harm)) +
+    geom_histogram() +
+    facet_wrap(.~Source, scales = "free_y")
+
+# Compare markers
+ggplot(gen_div, aes(He)) +
+    geom_histogram() +
+    facet_wrap(.~Marker, scales = "free_y")
+
+ggplot(gen_div, aes(He_harm)) +
+    geom_histogram() +
+    facet_wrap(.~Marker, scales = "free_y")
+
+# Compare sources and markers
+ggplot(gen_div, aes(He)) +
+    geom_histogram() +
+    facet_wrap(Marker~Source, scales = "free_y")
+
+ggplot(gen_div, aes(He_harm)) +
+    geom_histogram() +
+    facet_wrap(Marker~Source, scales = "free_y")
+
+# Look into phenotic rates
+ggplot(pheno_rate, aes(PR1)) +
+    geom_histogram() +
+    facet_wrap(Trait~., scales = "free")
+
+ggplot(pheno_rate, aes(PR_harm)) +
+    geom_histogram() +
+    facet_wrap(Trait~., scales = "free")
+
+```
+
+# Merge genetic and bioshifts data
+
+```{r}
+
+gen_data_v1 <- append(list(gen_div), 
+                      list(biov1)) %>% reduce(full_join, by='spp')
+gen_data_v1 <- gen_data_v1 %>% 
+    filter(!is.na(He), !is.na(SHIFT))
+
+# Remove groups with few species
+rem <- gen_data_v1 %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+rem <- rem$Class[which(rem$N<3)]
+
+gen_data_v1 <- gen_data_v1 %>% 
+    filter(!Class %in% rem)
+
+# N species
+length(unique(gen_data_v1$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1$shift_vel_sign)
+
+gen_data_v1 <- gen_data_v1 %>% filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+gen_data_v1
+# N species
+length(unique(gen_data_v1$spp))
+
+# N obs per species
+# View(table(gen_data_v1$spp))
+
+ggplot(gen_data_v1, aes(He_harm2)) +
+    geom_histogram()
+
+ggplot(gen_data_v1, aes(He_harm)) +
+    geom_histogram()
+
+```
+
+## Which species?
+
+```{r}
+toplot_ <- gen_data_v1 %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+
+ggplot(toplot_, aes(x = Class, y = N))+
     ggtitle("N species by Class")+
     geom_bar(stat="identity")+
-    geom_text(aes(y=Freq, label=Freq), 
-                  hjust = -.1, vjust=0.2, size=3, 
+    geom_text(aes(y=N, label=N), 
+              hjust = -.1, vjust=0.2, size=3, 
               position = position_dodge(0.9))+
     theme_classic()+
     coord_flip()
 
-toplot <- splist %>%
-    group_by(family) %>%
-    summarise(N = length(family))
-level_order <- toplot$family[order(toplot$N)]
+```
 
-ggplot(toplot, aes(x=factor(family, level = level_order), y = N))+
-    ggtitle("N species by Family")+
-    geom_col()+
+## General pattern
+
+```{r fig.width=10, fig.height=4}
+gen_data_v1 %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+gen_data_v1 %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+```
+
+## Per group
+
+```{r fig.width=10, fig.height=5}
+
+gen_data_v1 %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+gen_data_v1 %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+
+```
+
+The merge we made considers all possible combinations of He and Shifts for each species. Therefore, there are lots of pseudo-replicates. Explore average difference in genetic diversity measures per species.
+
+```{r}
+
+DT::datatable(gen_div %>% 
+                  group_by(spp) %>%
+                  summarise(mean = mean(He_harm2),
+                            sd = sd(He_harm2),
+                            N = length(spp)))
+
+# For some species we can get quite large variance in He. For example Fistularia commersonii:
+gen_div %>% 
+    filter(spp=="Fistularia commersonii")
+
+
+```
+
+# Mergind using average He per species
+
+```{r}
+
+gen_div_avg <- gen_div %>%
+    group_by(spp) %>%
+    summarise(N = length(spp),
+              He = median(He_harm)) 
+
+#merge all data frames in list
+gen_data_v1_avg <- append(list(gen_div_avg), list(biov1)) %>% reduce(full_join, by='spp')
+gen_data_v1_avg <- gen_data_v1_avg %>% filter(!is.na(He), !is.na(SHIFT))
+
+# Remove groups with few species
+rem <- gen_data_v1_avg %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+rem <- rem$Class[which(rem$N<3)]
+
+gen_data_v1_avg <- gen_data_v1_avg %>% 
+    filter(!Class %in% rem)
+
+# N species
+length(unique(gen_data_v1_avg$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_avg$shift_vel_sign)
+
+gen_data_v1_avg <- gen_data_v1_avg %>% filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+```
+
+## Which species?
+
+```{r}
+toplot_ <- gen_data_v1_avg %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+
+ggplot(toplot_, aes(x = Class, y = N))+
+    ggtitle("N species by Class")+
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N), 
+              hjust = -.1, vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
     theme_classic()+
-    coord_flip()+
-    xlab("")
+    coord_flip()
+
 ```
 
-# Explore relatioships
+## General pattern
 
-## *Malin's data*
+```{r fig.width=10, fig.height=4}
+gen_data_v1_avg %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+gen_data_v1_avg %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+```
+
+## Per group
+
+```{r fig.width=10, fig.height=5}
+
+gen_data_v1_avg %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+gen_data_v1_avg %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+
+```
+
+# Mergind using average He per Param & species
+
+Use lower latitude TE and higher latitude as LE
 
 ```{r}
 
-bs_v2$SHIFT <- as.numeric(bs_v2$`Conversion to km/dec`)
+gen_div_avg_2 <- gen_div %>%
+    group_by(spp) %>%
+    summarise(#N = length(spp),
+        LE = median(He_harm[which(lat==max(lat))]),
+        O = median(He_harm),
+        TE = median(He_harm[which(lat==min(lat))])) %>%
+    # filter(N>5) %>%
+    select(spp, LE, O, TE) %>%
+    gather(Param, He, -spp)
 
-bs_v1$sp_name_std_v1 <- gsub("_"," ",bs_v1$sp_name_std_v1)
-bs_v2$sp_name_std_v2 <- gsub("_"," ",bs_v2$sp_name_std_v2)
+#merge all data frames in list
+gen_data_v1_avg_2 <- append(list(gen_div_avg_2), list(biov1)) %>% reduce(full_join, by=c("spp","Param"))
+gen_data_v1_avg_2 <- gen_data_v1_avg_2 %>% filter(!is.na(He), !is.na(SHIFT))
 
-bs_v1_ms <- merge(bs_v1, ms, by.x = "sp_name_std_v1", by.y = "spp_new")
-bs_v1_mt <- merge(bs_v1, mt, by.x = "sp_name_std_v1", by.y = "spp_new")
+# N species
+length(unique(gen_data_v1_avg_2$spp))
 
-bs_v2_ms <- merge(bs_v2, ms, by.x = "sp_name_std_v2", by.y = "spp_new", allow.cartesian=TRUE)
-bs_v2_mt <- merge(bs_v2, mt, by.x = "sp_name_std_v2", by.y = "spp_new")
+# Remove groups with few species
+rem <- gen_data_v1_avg_2 %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+rem <- rem$Class[which(rem$N<3)]
 
-ggplot(bs_v1_ms, aes(x = He, y = SHIFT))+
-    ggtitle("Malin's data (Micro satelite (He))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "gam")
+gen_data_v1_avg_2 <- gen_data_v1_avg_2 %>% 
+    filter(!Class %in% rem)
 
-ggplot(bs_v1_ms, aes(x = Hese, y = SHIFT))+
-    ggtitle("Malin's data (Micro satelite  (Hese))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "gam")
+# N species
+length(unique(gen_data_v1_avg_2$spp))
 
-ggplot(bs_v1_mt, aes(x = He, y = SHIFT))+
-    ggtitle("Malin's data (Mitocondrial DNA (He))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "gam")
+# Use only plus plus or minus minus
+table(gen_data_v1_avg_2$shift_vel_sign)
 
-ggplot(bs_v1_mt, aes(x = Hese, y = SHIFT))+
-    ggtitle("Malin's data (Mitocondrial DNA (Hese))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "gam")
+# gen_data_v1_avg_2 <- gen_data_v1_avg_2 %>% filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
 
-ggplot(bs_v2_ms, aes(x = He, y = SHIFT))+
-    ggtitle("Malin's data (Micro satelite (He))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "gam")
-
-ggplot(bs_v2_ms, aes(x = Hese, y = SHIFT))+
-    ggtitle("Malin's data (Micro satelite (Hese))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "gam")
-
-ggplot(bs_v2_mt, aes(x = He, y = SHIFT))+
-    ggtitle("Malin's data (Mitocondrial DNA (He))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "gam")
-
-ggplot(bs_v2_mt, aes(x = Hese, y = SHIFT))+
-    ggtitle("Malin's data (Mitocondrial DNA (Hese))\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "gam")
-
+# N species
+length(unique(gen_data_v1_avg_2$spp))
 
 ```
 
-## *De Kort 2021 data*
+## Which species?
 
 ```{r}
-bs_v1_d <- merge(bs_v1[,c("sp_name_std_v1","SHIFT", "Class")], 
-                 gen_d[,c("GDp","spp_new")], 
-                 by.x = "sp_name_std_v1", by.y = "spp_new")
+toplot_ <- gen_data_v1_avg_2 %>%
+    group_by(Group) %>%
+    summarise(N = length(unique(spp)))
 
-bs_v2_d <- merge(bs_v2[,c("sp_name_std_v2","SHIFT", "class")], 
-                 gen_d[,c("GDp","spp_new")], 
-                 by.x = "sp_name_std_v2", by.y = "spp_new", 
-                 allow.cartesian=TRUE)
+ggplot(toplot_, aes(x = Group, y = N))+
+    ggtitle("N species by Group")+
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N), 
+              hjust = -.1, vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
 
-ggplot(na.omit(bs_v1_d) %>%
-           filter(!SHIFT < -40), 
-       aes(x = GDp, y = SHIFT))+
-    ggtitle("De Kort 2021 (Genetic diversity)\nBioshifts v1")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "lm") +
-    facet_wrap(.~Class, scales = "free")
-
-ggplot(na.omit(bs_v2_d), aes(x = GDp, y = SHIFT))+
-    ggtitle("De Kort 2021 (Genetic diversity)\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "lm") +
-    facet_wrap(.~class, scales = "free")
 ```
 
-## *De Lawrence & Fraser 2020 data*
+## General pattern
+
+```{r fig.width=10, fig.height=4}
+
+gen_data_v1_avg_2 %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+gen_data_v1_avg_2 %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("Lag (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+```
+
+## Per group
+
+```{r fig.width=10, fig.height=5}
+
+gen_data_v1_avg_2 %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+gen_data_v1_avg_2 %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+
+```
+
+# Mergind based on distance
+
+Get the avg gen div weighted by distance to the shift data
+
+```{r echo=FALSE}
+
+m <- unique(biov1$spp[which(biov1$spp %in% gen_div$spp)])
+
+gen_data_v1_dist <- list()
+
+for(i in 1:length(m)){ cat(i, "from", length(m), "\r")
+    sp2go <- m[i]
+    sub_gen <- subset(gen_div, spp == sp2go)
+    sub_gen_v <- terra::vect(sub_gen, 
+                             geom=c("long", "lat"), 
+                             crs = "+proj=longlat +datum=WGS84 +no_defs")
+    
+    sub_bio <- subset(biov1, spp == sp2go)
+    areas <- unique(sub_bio$ID)
+    
+    gen_data_v1_dist_tmp <- list()
+    
+    for(j in 1:length(areas)){
+        area2go <- areas[j]
+        sub_bio_area_j <- subset(sub_bio, ID == area2go)
+        sub_bio_area_j_v <- terra::vect(unique(sub_bio_area_j[,c("long", "lat")]), 
+                                        geom=c("long", "lat"), 
+                                        crs = "+proj=longlat +datum=WGS84 +no_defs")
+        
+        # plot(terra::vect(rbind(sub_gen[,c("long", "lat")], sub_bio_area_j[,c("long", "lat")]),
+        #                  geom=c("long", "lat"), 
+        #                  crs = "+proj=longlat +datum=WGS84 +no_defs"))
+        # plot(sub_bio_area_j_v, col = "red", add=T)
+        
+        dists <- terra::distance(sub_gen_v, sub_bio_area_j_v)[,1]
+        
+        # the closest
+        dists_order <- order(dists)[1]
+        # sub_gen <- sub_gen[dists_order,]
+        
+        # gen_data_v1_dist_tmp[[j]] <- append(list(sub_gen), list(sub_bio_area_j)) %>% 
+        #     reduce(full_join, by="spp")
+        
+        # weighted distance
+        wtd_he <- weighted.mean(sub_gen$He_harm, 1/dists) # inverse of the distance
+        sub_gen_tmp <- sub_gen[dists_order,]
+        sub_gen_tmp$He <- wtd_he
+        
+        gen_data_v1_dist_tmp[[j]] <- append(list(sub_gen_tmp), list(sub_bio_area_j)) %>% 
+            reduce(full_join, by="spp")
+    }
+    
+    gen_data_v1_dist[[i]] <- rbindlist(gen_data_v1_dist_tmp)
+    
+}
+
+gen_data_v1_dist <- rbindlist(gen_data_v1_dist)
+
+gen_data_v1_dist <- gen_data_v1_dist %>% filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1_dist$spp))
+
+# Remove groups with few species
+rem <- gen_data_v1_dist %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+rem <- rem$Class[which(rem$N<3)]
+
+gen_data_v1_dist <- gen_data_v1_dist %>% 
+    filter(!Class %in% rem)
+
+# N species
+length(unique(gen_data_v1_dist$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_dist$shift_vel_sign)
+
+gen_data_v1_dist <- gen_data_v1_dist %>% filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+# N species
+length(unique(gen_data_v1_dist$spp))
+
+```
+
+## Which species?
 
 ```{r}
-bs_v1_lf <- merge(bs_v1[,c("sp_name_std_v1","SHIFT", "Class")], 
-                  gen_lf[,c("FST","spp_new")], 
-                  by.x = "sp_name_std_v1", by.y = "spp_new")
-bs_v1_lf$FST <- as.numeric(bs_v1_lf$FST)
+toplot_ <- gen_data_v1_dist %>%
+    group_by(Group) %>%
+    summarise(N = length(unique(spp)))
 
-bs_v2_lf <- merge(bs_v2[,c("sp_name_std_v2","SHIFT", "class")],
-                  gen_lf[,c("FST","spp_new")], 
-                  by.x = "sp_name_std_v2", by.y = "spp_new", allow.cartesian=TRUE)
-bs_v2_lf$FST <- as.numeric(bs_v2_lf$FST)
+ggplot(toplot_, aes(x = Group, y = N))+
+    ggtitle("N species by Group")+
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N), 
+              hjust = -.1, vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
 
-ggplot(bs_v1_lf, aes(x = FST, y = SHIFT))+
-    ggtitle("Lawrence & Fraser 2020 (FST)\nBioshifts v1")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = Class), method = "lm") +
-    facet_wrap(.~Class, scales = "free")
-
-ggplot(bs_v2_lf, aes(x = FST, y = SHIFT))+
-    ggtitle("Lawrence & Fraser 2020 (FST)\nBioshifts v2")+
-    geom_point(alpha = .3)+
-    theme_bw()+
-    geom_smooth(aes(color = class), method = "lm") +
-    facet_wrap(.~class, scales = "free")
 ```
 
-**END**
+## General pattern
+
+```{r fig.width=10, fig.height=4}
+gen_data_v1_dist %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+gen_data_v1_dist %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+```
+
+## Per group
+
+```{r fig.width=10, fig.height=5}
+
+gen_data_v1_dist %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Latitude")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+gen_data_v1_dist %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = He, y = lag3, color = Group))+
+    ggtitle("Elevation")+
+    xlab("Genetic diversity (He)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+
+```
+
+# Playing with models
+
+# Select a dataset
+
+```{r}
+
+mydataset <- gen_data_v1_dist
+
+```
+
+## 1 full models
+
+### Latitude
+
+#### Interaction in the fixed effect
+
+Variables description:
+
+lag3 = velocity-shift
+
+lag3 = velocity-corrected_shift
+
+lag33 = lag3 (= velocity when shifts in opposite direction)
+
+lag34 = lag3 (= velocity when shifts in opposite direction)
+
+```{r}
+
+# What is the best model?
+# lag3 model
+
+lat_groups <- mydataset %>%
+    filter(Type == "LAT") %>%
+    group_by(Group) %>%
+    summarise(N = length(unique(spp)))
+lat_groups <- lat_groups$Group[which(lat_groups$N >= 5)]
+lat_groups
+
+mydatatogo <- mydataset %>%
+    filter(Type == "LAT") %>%
+    filter(Group %in% lat_groups) %>%
+    mutate(He = scale(He),
+           lag3 = scale(lag3),
+           SHIFT = scale(SHIFT))
+
+m_lat_l <- lmer(lag3 ~ He*Param + (1|ID) + (1|Group),
+                REML=TRUE, na.action="na.fail",
+                control = lmerControl(optimizer ='optimx', 
+                                      optCtrl=list(method='nlminb')),
+                data = mydatatogo)
+
+MuMIn::r.squaredGLMM(m_lat_l)
+# R2m       R2c
+# 0.105442 0.6508075
+
+summary(m_lat_l)
+
+# Shift model
+m_lat_s <- lmer(SHIFT ~ He*velocity*Param + (1|ID) + (1|Group),
+                REML=TRUE, na.action="na.fail",
+                control = lmerControl(optimizer ='optimx', 
+                                      optCtrl=list(method='nlminb')),
+                data = mydatatogo)
+
+MuMIn::r.squaredGLMM(m_lat_s)
+# R2m       R2c
+# 0.3022617 0.6866355
+summary(m_lat_s)
+
+anova(m_lat_l,m_lat_s)
+#          npar    AIC    BIC  logLik deviance  Chisq Df Pr(>Chisq)    
+# m_lat_s   10 3939.4 3986.2 -1959.7   3919.4                         
+# m_lat_l   22 3430.3 3533.1 -1693.1   3386.3 533.18 12  < 2.2e-16 ***
+# The lag3 model is better
+
+summary(m_lat_l)
+
+plot_model(m_lat_l, type = "pred")
+plot_model(m_lat_l, type = "pred", terms = c("He", "Param"))
+plot_model(m_lat_l, type = "pred", terms = c("He", "Param", "Group"))
+
+
+```
+
+#### Interaction in the random effect
+
+```{r}
+
+# What is the best model?
+# lag3 model
+m_lat_l <- lmer(lag33 ~ He + (He|Param:Group) + (1|ID) + (1|Class),
+                REML=TRUE,na.action="na.fail",
+                control = lmerControl(optimizer ='optimx', 
+                                      optCtrl=list(method='nlminb')),
+                data = mydataset %>%
+                    filter(Type == "LAT") %>%
+                    filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_lat_l) 
+# R2m       R2c
+# 0.001001386 0.518533
+
+# Shift model
+m_lat_s <- lmer(SHIFT ~ He*velocity + (He|Param:Group) + (1|ID) + (1|Class),
+                REML=TRUE,na.action="na.fail",
+                control = lmerControl(optimizer ='optimx', 
+                                      optCtrl=list(method='nlminb')),
+                data = mydataset %>%
+                    filter(Type == "LAT") %>%
+                    filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_lat_s)
+# R2m       R2c
+# 0.01929231 0.3231063
+
+anova(m_lat_l,m_lat_s)
+# npar    AIC    BIC  logLik deviance  Chisq Df Pr(>Chisq)    
+# m_lat_l    8 3448.2 3485.6 -1716.1   3432.2                    
+# m_lat_s   10 3939.4 3986.2 -1959.7   3919.4     0  2          1
+# No difference
+
+
+summary(m_lat_s)
+
+rr1 <- ranef(m_lat_s)
+rr1dt <- as.data.frame(rr1)
+
+ggplot(rr1dt %>%
+           filter(grpvar == "Param:Group"), 
+       aes(y=grp,x=condval)) +
+    geom_point() + facet_wrap(~term,scales="free_x") +
+    geom_errorbarh(aes(xmin=condval -2*condsd,
+                       xmax=condval +2*condsd), height=0) +
+    geom_vline(xintercept = 0, linetype = "dotted")
+
+plot_model(m_lat_s, type = "pred", 
+           pred.type = "re", # prediction is conditioned on random effects
+           terms = c("He", "Param", "Group"))
+
+```
+#### Residual model
+```{r}
+
+# What is the best model?
+# lag3 model
+m_lat_l <- lm(lag34 ~ He*Param*Group, 
+              data = mydataset %>%
+                  filter(Type == "LAT") %>%
+                  filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+tmp <- summary(m_lat_l)
+tmp$r.squared
+# R2 0.08499444
+
+# Shift model
+m_lat_s <- lm(shift_corrected ~ He*Param*Group*velocity,
+              data = mydataset %>%
+                  filter(Type == "LAT") %>%
+                  filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+tmp <- summary(m_lat_s)
+tmp$r.squared
+# R2 0.09969969
+
+
+AIC(m_lat_l) # 3610.265
+AIC(m_lat_s) # 3872.998
+
+# The shift model is better
+
+summary(m_lat_s)
+
+plot_model(m_lat_s, type = "pred", terms = c("He", "Param"))
+plot_model(m_lat_s, type = "pred", terms = c("He", "Param", "Group"))
+
+```
+
+### Elevation
+
+#### Interaction in the fixed effect
+
+```{r}
+
+# What is the best model?
+# lag3 model
+m_ele_l <- lmer(lag3 ~ He*Group*Param + (1|ID) + (1|spp),
+                REML=TRUE,na.action="na.fail",
+                control = lmerControl(optimizer ='optimx', 
+                                      optCtrl=list(method='nlminb')),
+                data = mydataset %>%
+                    filter(Type == "ELE") %>%
+                    filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_ele_l) 
+# R2m       R2c
+# 0.1639858 0.8498925
+
+summary(m_ele_l)
+
+newdata <- mydataset %>%
+    filter(Type == "ELE") %>%
+    filter(Group == "Bird" | Group == "Mammal" | Group == "Plant")
+
+table(newdata$Group, newdata$Param)
+
+# Shift model
+m_ele_s <- lmer(SHIFT ~ He*Param*Group + velocity + DUR + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution +
+                    (1|ID) + (1|Class/Family),
+                REML=TRUE,na.action="na.fail",
+                control=lmerControl(optimizer="Nelder_Mead",
+                                    optCtrl=list(maxfun=1e4)),
+                data = mydataset %>%
+                    filter(Type == "ELE") %>%
+                    filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_ele_s)
+# R2m       R2c
+# 0.1538334 0.7777449
+
+anova(m_ele_l, m_ele_s)
+# npar    AIC    BIC  logLik deviance  Chisq Df Pr(>Chisq)    
+# m_ele_l   28 1924.9 2032.0 -934.46   1868.9                         
+# m_ele_s   29 1875.4 1986.2 -908.68   1817.4 51.566  1  6.923e-13 ***
+
+# The shift model is better
+
+summary(m_ele_s)
+
+plot_model(m_ele_l, type = "pred", terms = c("He", "Param"))
+plot_model(m_ele_l, type = "pred", terms = c("He", "Param", "Group"))
+
+```
+
+#### Interaction in the random effect
+
+```{r}
+
+# What is the best model?
+# lag3 model
+m_ele_l <- lmer(lag3 ~ He + DUR + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution +
+                    (He|Param:Group) + (1|ID) + (1|Class),
+                REML=TRUE,na.action="na.fail",
+                control=lmerControl(optimizer="Nelder_Mead",
+                                    optCtrl=list(maxfun=1e4)),
+                data = mydataset %>%
+                    filter(Type == "ELE") %>%
+                    filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_ele_l) 
+# R2m       R2c
+# 0.1404882 0.4756365
+
+# Shift model
+m_ele_s <- lmer(SHIFT ~ He + velocity + DUR + ID.area + Data + Sampling + Uncertainty_Parameter + Uncertainty_Distribution +
+                    (He|Param:Group) + (1|ID) + (1|Class),
+                REML=TRUE,na.action="na.fail",
+                control=lmerControl(optimizer="Nelder_Mead",
+                                    optCtrl=list(maxfun=1e4)),
+                data = mydataset %>%
+                    filter(Type == "ELE") %>%
+                    filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+MuMIn::r.squaredGLMM(m_ele_s)
+# R2m       R2c
+# 0.04575894 0.2209294
+
+anova(m_ele_l,m_ele_s)
+# npar    AIC    BIC  logLik deviance  Chisq Df Pr(>Chisq)    
+# m_ele_l   17 1926.1 1991.1 -946.05   1892.1                         
+# m_ele_s   18 1878.4 1947.2 -921.21   1842.4 49.675  1  1.815e-12 ***
+
+# The shift model is better
+
+summary(m_ele_s)
+
+rr1 <- ranef(m_ele_s)
+rr1dt <- as.data.frame(rr1)
+
+ggplot(rr1dt %>%
+           filter(grpvar == "Param:Group"), 
+       aes(y=grp,x=condval)) +
+    geom_point() + facet_wrap(~term,scales="free_x") +
+    geom_errorbarh(aes(xmin=condval -2*condsd,
+                       xmax=condval +2*condsd), height=0) +
+    geom_vline(xintercept = 0, linetype = "dotted")
+
+plot_model(m_ele_s, type = "pred", 
+           pred.type = "re", # prediction is conditioned on random effects
+           terms = c("He", "Param", "Group"))
+```
+
+## 1 residual models
+
+### Latitude
+
+```{r}
+
+# What is the best model?
+# lag3 model
+m_lat_l <- lm(lag3_corrected ~ He*Param*Group, 
+              data = mydataset %>%
+                  filter(Type == "LAT") %>%
+                  filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+tmp <- summary(m_lat_l)
+tmp$r.squared
+# R2 0.06507956
+
+# Shift model
+m_lat_s <- lm(shift_corrected ~ He*Param*Group,
+              data = mydataset %>%
+                  filter(Type == "LAT") %>%
+                  filter(Group == "Bird" | Group == "Fish" | Group == "Plant"))
+
+tmp <- summary(m_lat_s)
+tmp$r.squared
+# R2 0.06244831
+
+
+AIC(m_lat_l) # 3863.699
+AIC(m_lat_s) # 3899.464
+
+# The lag3 model is better
+
+summary(m_lat_l)
+
+plot_model(m_lat_l, type = "pred", terms = c("He", "Param"))
+plot_model(m_lat_l, type = "pred", terms = c("He", "Param", "Group"))
+```
+
+### Elevation
+
+```{r}
+
+# What is the best model?
+# lag3 model
+m_ele_l <- lm(lag3_corrected ~ He*Param*Group, 
+              data = mydataset %>%
+                  filter(Type == "ELE") %>%
+                  filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+tmp <- summary(m_ele_l)
+tmp$r.squared
+# R2 0.1576408
+
+# Shift model
+m_ele_s <- lm(shift_corrected ~ He*Param*Group,
+              data = mydataset %>%
+                  filter(Type == "ELE") %>%
+                  filter(Group == "Bird" | Group == "Mammal" | Group == "Plant"))
+
+tmp <- summary(m_ele_s)
+tmp$r.squared
+# R2 0.1704202
+
+
+AIC(m_ele_l) # 1853.729
+AIC(m_ele_s) # 1861.984
+
+# The lag3 model is better
+
+summary(m_ele_l)
+
+plot_model(m_ele_l, type = "pred", terms = c("He", "Param"))
+plot_model(m_ele_l, type = "pred", terms = c("He", "Param", "Group"))
+```
+
+# ----------------------------
+
+# Phenotypic rates and bioshifts data
+
+# Mergind using average He per species
+
+```{r}
+
+pheno_rate_avg <- pheno_rate %>%
+    group_by(spp) %>%
+    summarise(N = length(spp),
+              PR = median(PR_harm)) 
+
+#merge all data frames in list
+pheno_rate_v1_avg <- append(list(pheno_rate_avg), list(biov1)) %>% reduce(full_join, by='spp')
+pheno_rate_v1_avg <- pheno_rate_v1_avg %>% filter(!is.na(PR), !is.na(SHIFT))
+
+# Remove groups with few species
+rem <- pheno_rate_v1_avg %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+rem <- rem$Class[which(rem$N<3)]
+
+pheno_rate_v1_avg <- pheno_rate_v1_avg %>% 
+    filter(!Class %in% rem)
+
+# N species
+length(unique(pheno_rate_v1_avg$spp))
+
+# Use only plus plus or minus minus
+table(pheno_rate_v1_avg$shift_vel_sign)
+
+pheno_rate_v1_avg <- pheno_rate_v1_avg %>% filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+```
+
+## Which species?
+
+```{r}
+toplot_ <- pheno_rate_v1_avg %>%
+    group_by(Class) %>%
+    summarise(N = length(unique(spp)))
+
+ggplot(toplot_, aes(x = Class, y = N))+
+    ggtitle("N species by Class")+
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N), 
+              hjust = -.1, vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
+
+```
+
+## General pattern
+
+```{r fig.width=10, fig.height=4}
+pheno_rate_v1_avg %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = PR, y = lag3))+
+    ggtitle("Latitude")+
+    xlab("Phenotypic rates (PR)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+
+pheno_rate_v1_avg %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = PR, y = lag3))+
+    ggtitle("Elevation")+
+    xlab("Phenotypic rates (PR)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_wrap(.~Param, scales = "free", ncol = 3)
+```
+
+## Per group
+
+```{r fig.width=10, fig.height=5}
+
+pheno_rate_v1_avg %>%
+    filter(Type == "LAT") %>%
+    ggplot(aes(x = PR, y = lag3, color = Group))+
+    ggtitle("Latitude")+
+    xlab("Phenotypic rates (PR)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+pheno_rate_v1_avg %>%
+    filter(Type == "ELE") %>%
+    ggplot(aes(x = PR, y = lag3, color = Group))+
+    ggtitle("Elevation")+
+    xlab("Phenotypic rates (PR)")+
+    ylab("lag3 (Velocity - Shift)") +
+    geom_point(alpha = .5)+
+    theme_bw()+
+    geom_smooth(method = "lm")+
+    facet_grid(Param~Group, scales = "free")
+
+
+```
