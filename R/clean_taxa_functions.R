@@ -1,3 +1,15 @@
+# spnames = c("Alchemilla arvensis", 
+#             "Arabis bellidifolia", 
+#             "Elymus caput-medusae",
+#             "Perezia microcephala",
+#             "Polystachya estrellensis",
+#             "Tachigali rubiginosa",
+#             "Oxalis rhombeo ovata",
+#             "Axonopus canescens")
+# 
+# clean_sp_names <- Find_Sci_Names(spnames)
+# clean_sp_names
+
 Find_Sci_Names <- function(spnames, 
                            db = c("gbif","itis","ncbi","iucn"),
                            priority = "gbif",
@@ -7,6 +19,10 @@ Find_Sci_Names <- function(spnames,
     require("bdc")
     require("taxadb")
     require("traitdataform")
+    require("parallel")
+    require("dplyr")
+    require("data.table")
+    require("pbapply")
     
     # Create empty table 
     
@@ -27,9 +43,12 @@ Find_Sci_Names <- function(spnames,
             clusterExport(cl, c("togo","standardize_taxa"))
             
             new_names <- pblapply(togo$species, function(x){
-                try(standardize_taxa(data.frame(verbatimScientificName = x), 
-                                     fuzzy = FALSE,
-                                     silent = TRUE))
+                try(
+                    traitdataform::standardize_taxa(
+                        data.frame(verbatimScientificName = x), 
+                        fuzzy = FALSE,
+                        silent = TRUE)
+                    )
             }, cl = cl)
             
             stopCluster(cl)
@@ -118,7 +137,7 @@ Find_Sci_Names <- function(spnames,
                 new_names <- new_names[-which(duplicated(new_names$original_search)),]
             }
             
-            cat("--- Summary ---\n",
+            cat("\n--- Summary ---\n",
                 "N taxa:",nrow(togo),"\n",
                 "N taxa found:",length(which(new_names$taxonomicStatus == "accepted")), "\n",
                 "N taxa not found:", nrow(togo)-length(which(new_names$taxonomicStatus == "accepted")))
@@ -140,16 +159,18 @@ Find_Sci_Names <- function(spnames,
     
     #################################
     # Fix issues with scientific names
-    new <- sapply(tofind$scientificName, function(x){
-        tmp <- strsplit(x," ")[[1]]
-        if(any(duplicated(tmp))){
-            paste(tmp[-1], collapse = " ")
-        } else {
-            x
-        }
-    })
-    
-    tofind$scientificName <- new
+    if(any(!is.na(tofind$scientificName))){
+        new <- sapply(tofind$scientificName, function(x){
+            tmp <- strsplit(x," ")[[1]]
+            if(any(duplicated(tmp))){
+                paste(tmp[-1], collapse = " ")
+            } else {
+                x
+            }
+        })
+        
+        tofind$scientificName <- new
+    }
     
     #################################
     # Priority
@@ -289,13 +310,6 @@ Clean_Names <- function(names, show.progress = FALSE, return_gen_sps = TRUE){
 
 
 ####################
-# spnames = c("Arabis bellidifolia","Elymus caput-medusae")
-# spnames = togo$species
-# db = "gbif"
-# suggest_names = FALSE
-# return_accepted_only = TRUE
-# # 
-# test = Find_Names("Elymus caput-medusae", db = "iucn", suggest_names = FALSE, return_accepted_only = TRUE)
 
 Find_Names <- function(spnames, 
                        db = "gbif", 
