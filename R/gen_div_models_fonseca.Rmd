@@ -170,7 +170,7 @@ dim(mydataset)
 ```
 
 
-# Latitude
+# Latitude models
 
 ```{r message=FALSE}
 
@@ -878,7 +878,7 @@ vis.gam(Taj_gamm2$gam,
         theta = 45)
 ```
 
-# Elevation
+# Elevation models
 
 ```{r message=FALSE}
 

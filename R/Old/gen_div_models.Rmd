@@ -1,0 +1,634 @@
+---
+title: "Adaptive potential\nModels"
+author: "Bioshifts group"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+---
+
+# Load libraries and source code
+
+```{r libs, message=FALSE}
+
+rm(list=ls())
+
+list.of.packages <- c("ggplot2", "data.table", "dplyr", "tidyr", "parallel", "bdc", "taxadb", "traitdataform", "pbapply", "tidyverse", "readxl", "lme4", "coefplot", "sjPlot", "sjmisc", "effects", "rgdal", "maptools", "terra", "MuMIn", "lsmeans", "GGally", "tidyterra", "glmmTMB", "DHARMa") 
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+```
+
+# Load data
+
+```{r splist}
+
+# Use only Fonseca
+# mydataset <- read.csv(here::here("Data/gen_data_final_m5.csv"))
+mydataset <- read.csv(here::here("Data/gen_data_v1_dist2_fon.csv"))
+
+# how many data at each shift gradient
+mydataset %>%
+  group_by(Type) %>%
+  tally
+
+# how many data at each shift gradient / parameter
+mydataset %>%
+  group_by(Type,Param) %>%
+  tally
+
+summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
+summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
+
+summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
+summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
+
+summary(mydataset$velocity[which(mydataset$SHIFT>0)])
+summary(mydataset$velocity[which(mydataset$SHIFT<0)])
+
+```
+
+# Data description
+
+**Genetic data**  
+- He = heterozigosite measurements from multiple data sources (DeKort et al 2021, Nature Communications; Lawrence and Fraser 2020, Global Ecology and Biogeography; Malin, Unpublished).  
+Genetic data was harmonized following multiple methods, so that measurements across different marker types are comparable:  
+- He_harm: transformation used in DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
+1) scale values at each marker type  
+2) standardize (x - min)/(max-min)  
+- He_harm2: transformation suggested by Malin. Applies the function transform01 before a logit transformation. 
+1) transform01 >> The only intent of this function is to move slightly inward the values of He so that it allows applying logit transformation.
+2) apply logit transformation  
+- He_harm3: He_harm2 centered in zero.   
+
+Genetic data was paired with bioshifts data based on geographical distance of observations. For each species range shift, get the closest He to the centroid (for O), to the max latitude (for LE, at the North hemisphere), and to the min latitude (for TE, at the North hemisphere) of the study area.   
+
+We did the same procedure but averaging He values and weighting by distance from the range shift observation. We flag He_harm metrics generated with the average distance procedure with the suffix "-w".  
+
+**Shift data**  
+We ran models using raw and *corrected* shift values. Corrected shifts were estimated based on models that account for variability in methodology of the different studies estimating range shifts and taxonomy.  
+- SHIFT = raw data  
+- SHIFT_cor = corrected data  
+
+**Lag data**  
+We calculated lag as the difference between the velocity of temperature change and that of species range shift (lag = velocity - shift). A positive value means that a species range shift lag behind climate change velocity, values close to zero means species track climate change closely, whereas a negative value means species are shift their range faster than expected by the velocity of climate change (overshoot). In cases the velocity of climate change was negative, we change the sign of lag, so that positive values always mean lag, and negative values always mean overshoot.  
+We tried to account and explore for situations that may generate confusion, as described the metrics bellow:  
+- lag: velocity - shift (we change the sign of lag when velocity is negative)  
+- lag2: when species shift in the opposite direction of velocity, lag = velocity  
+- lag3: when shift is faster than velocity, lag = 0.  
+
+
+# Select only shifts in the same direction of velocity
+```{r}
+
+mydataset <- mydataset %>%
+  filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+# 
+# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
+# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
+# 
+# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
+# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
+
+
+```
+
+# Select groups with at least 5 observations
+```{r}
+
+n_groups = 5
+
+type_groups_lat <- mydataset %>%
+  filter(Type == "LAT") %>%
+  group_by(Group,Param) %>%
+  dplyr::summarise(N = length(Param)) %>%
+  dplyr::filter(N>n_groups) %>%
+  group_by(Group) %>%
+  dplyr::summarise(N = length(Param)) %>%
+  dplyr::filter(N>=3)
+
+type_groups_ele <- mydataset %>%
+  filter(Type == "ELE") %>%
+  group_by(Group,Param) %>%
+  dplyr::summarise(N = length(Param)) %>%
+  dplyr::filter(N>n_groups) %>%
+  group_by(Group) %>%
+  dplyr::summarise(N = length(Param)) %>%
+  dplyr::filter(N>=3)
+
+mydataset <- mydataset %>%
+  dplyr::filter((Type == "LAT" & Group %in% type_groups_lat$Group) | (Type == "ELE" & Group %in% type_groups_ele$Group))
+
+```
+
+# Remove outliers in shift
+
+```{r message=FALSE}
+
+# LAT
+LAT_obs <- mydataset %>% 
+  filter(Type == "LAT")
+
+summary(LAT_obs$SHIFT_abs)
+hist(LAT_obs$SHIFT_abs)
+
+thr <- quantile(LAT_obs$SHIFT_abs,c(.01,0.99))
+thr
+
+rem <- which((LAT_obs$SHIFT_abs > thr[1]) & (LAT_obs$SHIFT_abs < thr[2]))
+if(any(rem)){
+  LAT_obs <- LAT_obs[rem,]
+}
+summary(LAT_obs$SHIFT_abs)
+hist(LAT_obs$SHIFT_abs)
+
+hist(sqrt(LAT_obs$SHIFT_abs))
+
+
+# ELE
+ELE_obs <- mydataset %>% 
+  filter(Type == "ELE")
+
+summary(ELE_obs$SHIFT_abs)
+hist(ELE_obs$SHIFT_abs)
+
+thr <- quantile(ELE_obs$SHIFT_abs,c(.01,0.99))
+thr
+
+rem <- which((ELE_obs$SHIFT_abs > thr[1]) & (ELE_obs$SHIFT_abs < thr[2]))
+if(any(rem)){
+  ELE_obs <- ELE_obs[rem,]
+}
+summary(ELE_obs$SHIFT_abs)
+hist(ELE_obs$SHIFT_abs)
+
+hist(sqrt(ELE_obs$SHIFT_abs))
+
+# Combine
+mydataset <- rbind(LAT_obs,ELE_obs)
+hist(mydataset$SHIFT_abs)
+hist(sqrt(mydataset$SHIFT_abs))
+
+##############
+# Lags look ok
+
+# remove outliers in lag
+# summary(mydataset$lag)
+hist(mydataset$lag)
+# thr <- quantile(mydataset$lag,c(.01,0.99))
+# thr
+# 
+# rem <- which((mydataset$lag > thr[1]) & (mydataset$lag < thr[2]))
+# if(any(rem)){
+#     mydataset <- mydataset[rem,]
+# }
+# summary(mydataset$lag)
+# hist(mydataset$lag)
+```
+
+
+# Playing with models
+
+## Latitude
+
+```{r message=FALSE}
+
+mydatatogo <- mydataset  %>%
+  dplyr::filter(Type == "LAT") %>%
+  mutate(He_harm = scale(He_harm),
+         He_harm2 = scale(He_harm2),
+         He_harm3 = scale(He_harm3),
+         # He_harm_w = scale(He_harm),
+         # He_harm3_w = scale(He_harm3_w),
+         # He_harm3_w = scale(He_harm3_w),
+         velocity_raw = velocity,
+         velocity = scale(velocity_raw),
+         velocity_abs = scale(abs(velocity_raw)),
+         lag = scale(lag),
+         lag2 = scale(lag2),
+         lagC = scale(lagC),
+         lagC2 = scale(lagC2),
+         lagC3 = lagC3,
+         ID.area = scale(ID.area),
+         DUR = scale(DUR),
+         dist_weight = 1/log(min_dist), # this is the transformation I found leads to a normal distribution
+         START = scale(START),
+         SHIFT_raw = SHIFT,
+         SHIFT = scale(SHIFT_raw),
+         SHIFT_abs = 
+           # scale(sqrt(
+           SHIFT_abs
+         # ))
+         ,
+         SHIFT_cor_raw = SHIFT_cor,
+         SHIFT_cor = scale(SHIFT_cor_raw),
+         SHIFT_cor_abs = abs(SHIFT_cor),
+         Param = factor(Param),
+         Group = factor(Group),
+         spp = factor(spp)) %>%
+  dplyr::select(He_harm, He_harm3, He_harm3, 
+                # He_harm_w, He_harm3_w, He_harm3_w, 
+                lag, lag2, lag3, lagC, lagC2, lagC3, ECO,
+                SHIFT, SHIFT_abs, SHIFT_cor, SHIFT_cor_abs, SHIFT_raw, SHIFT_cor_raw,
+                Param, Group, spp, Class, Family, Genus, velocity, velocity_abs, velocity_raw,
+                START, DUR, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, ID.area, Sampling, Article_ID,
+                min_dist, dist_weight,
+                Marker,
+                shift_vel_sign)
+
+mydatatogo <- data.frame(mydatatogo)
+dim(mydatatogo)
+
+hist(mydatatogo$SHIFT_cor_abs)
+hist(mydatatogo$SHIFT_cor_raw)
+
+ggplot(mydatatogo %>%
+         filter(ECO=="M"),
+       aes(x=He_harm3,y=SHIFT_cor_raw))+
+  geom_point()+
+  theme_bw()
+
+ggplot(mydatatogo %>%
+         filter(ECO=="M"),
+       aes(x=He_harm3,y=SHIFT_raw))+
+  geom_point()+
+  theme_bw()
+
+```
+
+
+### Shift model Param
+```{r fig.height=10, fig.width=10}
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- as.numeric(model_data$He_harm3)
+model_data$SHIFT <- as.numeric(model_data$SHIFT_cor_raw)
+# model_data$SHIFT <- as.numeric(model_data$SHIFT_raw)
+
+bestmodel <- lme::(SHIFT_cor_raw ~ 
+                     # Fixed effects
+                     ## Ecology
+                     velocity*He +
+                     ## Control Methods
+                     # START + ID.area + Sampling + Uncertainty_Parameter +
+                     # Uncertainty_Distribution + Grain_size + Data +
+                     # Random effects
+                     ## Studies
+                     (1|Article_ID)+
+                     ## Taxonomy
+                     (He|Group),
+                   # weight by distance of genetic data to range shift data
+                   # weights = dist_weight,
+                   data = model_data %>%
+                     filter(ECO=="T"),
+                   na.action = "na.omit")
+
+baseline <- lmer(SHIFT_cor_raw ~ 
+                   # Fixed effects
+                   ## Ecology
+                   velocity +
+                   ## Control Methods
+                   # START + ID.area + Sampling + Uncertainty_Parameter +
+                   # Uncertainty_Distribution + Grain_size + Data +
+                   # Random effects
+                   ## Studies
+                   (1|Article_ID)+
+                   ## Taxonomy
+                   (1|Group),
+                 # weight by distance of genetic data to range shift data
+                 # weights = dist_weight,
+                 REML=TRUE,
+                 data = model_data,
+                 na.action = "na.omit")
+
+
+AIC(bestmodel,baseline)
+
+summary(bestmodel)
+
+tmp <- effects::allEffects(bestmodel)
+
+# plot(tmp$`velocity:He:Param`)
+plot(tmp$`velocity:He`)
+plot(tmp$`velocity:He`)
+
+summary(bestmodel)
+confint(bestmodel)
+
+
+
+
+```
+
+
+### Code exp/cont I
+This makes all shifts positives and changes the sign of velocity when the raw shift is negative.
+
+
+
+```{r message=FALSE}
+# Code expansion vs contraction
+mydatatogo$Exp_Cont <- NA
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw <= 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw > 0)] <- "Exp"
+
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw < 0)] <- "Exp"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw >= 0)] <- "Cont"
+
+mydatatogo$Exp_Cont[
+  which(mydatatogo$Param == "O" & 
+          (mydatatogo$shift_vel_sign == "pospos"  | 
+             mydatatogo$shift_vel_sign == "negneg"))] <- "Exp"
+mydatatogo$Exp_Cont[
+  which(mydatatogo$Param == "O" & 
+          (mydatatogo$shift_vel_sign == "posneg"  | 
+             mydatatogo$shift_vel_sign == "negpos"))] <- "Cont"
+
+table(mydatatogo$Exp_Cont)
+
+any(is.na(mydatatogo$shift_vel_sign))
+summary(mydatatogo$velocity_raw[which(mydatatogo$shift_vel_sign=="pospos")])
+summary(mydatatogo$velocity_raw[which(mydatatogo$shift_vel_sign=="negneg")])
+
+summary(mydatatogo$SHIFT_raw[which(mydatatogo$shift_vel_sign=="pospos")])
+summary(mydatatogo$SHIFT_raw[which(mydatatogo$shift_vel_sign=="negneg")])
+
+summary(mydatatogo$velocity_raw[which(mydatatogo$SHIFT_raw>0)])
+summary(mydatatogo$velocity_raw[which(mydatatogo$SHIFT_raw<0)])
+
+plot(SHIFT_raw~velocity_raw,mydatatogo)
+
+# Fix shift & velocity sign
+mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor
+# mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor_raw
+mydatatogo$velocitynew <- mydatatogo$velocity_raw
+
+pos <- which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw <= 0)
+mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
+mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+
+pos <- which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw <= 0)
+mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
+mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+
+pos <- which(mydatatogo$Param == "O" & mydatatogo$SHIFT_raw <= 0)
+mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
+mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+
+summary(mydatatogo$SHIFTnew)
+summary(mydatatogo$velocitynew)
+
+plot(SHIFTnew~velocitynew,mydatatogo)
+
+hist(mydatatogo$SHIFTnew)
+
+hist(mydatatogo$velocitynew)
+
+dim(mydatatogo)
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = He_harm3))+
+  geom_boxplot()
+
+mod1 <- aov(He_harm3 ~ Exp_Cont, mydatatogo)
+summary(mod1)
+
+```
+
+
+
+#### Shift model Exp/Cont I
+
+```{r}
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- as.numeric(model_data$He_harm3)
+# define the lag metric to go
+model_data$SHIFT <- as.numeric(model_data$SHIFTnew)
+model_data$velocity <- as.numeric(model_data$velocitynew)
+model_data$Exp_Cont <- factor(model_data$Exp_Cont)
+
+model_data <- na.omit(model_data[,c("SHIFT","velocity","Exp_Cont","He","Article_ID","Group")])
+
+bestmodel <- glmer(SHIFT ~ 
+                     # Fixed effects
+                     ## Ecology
+                     velocity*He*Exp_Cont +
+                     ## Control Methods
+                     # START + ID.area + Sampling + Uncertainty_Parameter +
+                     # Uncertainty_Distribution + Grain_size + Data +
+                     # Random effects
+                     ## Studies
+                     (1|Article_ID)+
+                     ## Taxonomy
+                     (1|Group),
+                   # weight by distance of genetic data to range shift data
+                   # weights = dist_weight,
+                   data = model_data,
+                   na.action = "na.fail")
+
+baseline <- glmer(SHIFT ~ 
+                    # Fixed effects
+                    ## Ecology
+                    velocity*Exp_Cont +
+                    ## Control Methods
+                    # START + ID.area + Sampling + Uncertainty_Parameter +
+                    # Uncertainty_Distribution + Grain_size + Data +
+                    # Random effects
+                    ## Studies
+                    (1|Article_ID)+
+                    ## Taxonomy
+                    (1|Group),
+                  # weight by distance of genetic data to range shift data
+                  # weights = dist_weight,
+                  # family = Gamma(link = "logit"),
+                  data = model_data,
+                  na.action = "na.fail")
+
+
+AIC(bestmodel,baseline)
+
+plot(simulateResiduals(bestmodel))
+
+summary(bestmodel)
+
+tmp <- effects::allEffects(bestmodel)
+plot(tmp$`velocity:He:Exp_Cont`)
+
+plot(effect("He*Exp_Cont", bestmodel)) # He leads to faster contractions and slower expansions
+plot(effect("velocity:He", bestmodel)) # He interacts with velocity to affect shift. Shift is larger when He is high and velocity is high. The isolated effect of He and velocity on Shift is not significant.
+plot(effect("velocity:He:Exp_Cont", bestmodel)) # Marginal effect >> When He is high, there are more contractions with increasing velocity. When He is low, there is less contractions with increasing velocities.
+
+```
+
+
+
+## Code exp/cont II
+This makes all velocities positive and changes the sign of shift when in the opposite direction of velocity.
+The shift now represents the expectation of shift relative to the velocity.
+Positive values represent shift is the same direction of velocity.
+Negative in the opposite direction.
+```{r message=FALSE}
+
+# Code expansion vs contraction
+mydatatogo$Exp_Cont <- NA
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Exp"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Exp"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Cont"
+
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Exp"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Exp"
+
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Exp"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
+                            mydatatogo$SHIFT_raw >= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw > 0)] <- "Cont"
+mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
+                            mydatatogo$SHIFT_raw <= 0  & 
+                            mydatatogo$velocity_raw < 0)] <- "Exp"
+
+# Fix shift & velocity sign
+mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor
+# mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor_raw
+mydatatogo$velocitynew <- mydatatogo$velocity_raw
+
+pos <- which(mydatatogo$velocity_raw <= 0)
+mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
+mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+
+summary(mydatatogo$SHIFTnew)
+summary(mydatatogo$velocitynew)
+
+plot(SHIFTnew~velocitynew,mydatatogo)
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = velocitynew))+
+  geom_boxplot()+
+  facet_wrap(.~Param)
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = velocity))+
+  geom_jitter(width = .3)+
+  facet_wrap(.~Param)
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = SHIFTnew))+
+  geom_jitter(width = .3)+
+  facet_wrap(.~Param)
+
+ggplot(mydatatogo, aes(x = Exp_Cont))+
+  geom_bar()+
+  facet_wrap(.~Param)
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = SHIFTnew))+
+  geom_violin()
+
+ggplot(mydatatogo, aes(x = Exp_Cont, y = He_harm3))+
+  geom_violin()
+
+hist(mydatatogo$SHIFTnew[mydatatogo$Exp_Cont=="Exp"],breaks = 100)
+
+ggplot(mydatatogo, aes(x = He_harm3, y = SHIFTnew))+
+  geom_point()+
+  facet_wrap(.~Exp_Cont)+
+  geom_smooth(method='lm')
+
+```
+
+### Shift model Exp/Cont
+
+```{r}
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- as.numeric(scale(model_data$He_harm3))
+# define the lag metric to go
+model_data$SHIFT <- as.numeric(scale(model_data$SHIFTnew))
+model_data$velocity <- as.numeric(scale(model_data$velocitynew))
+model_data$Exp_Cont <- factor(model_data$Exp_Cont)
+
+model_data <- na.omit(model_data[,c("SHIFT","velocity","Exp_Cont","He","Article_ID","Group")])
+
+bestmodel <- glmer(SHIFT ~ 
+                     # Fixed effects
+                     ## Ecology
+                     velocity*He*Exp_Cont +
+                     ## Control Methods
+                     # START + ID.area + Sampling + Uncertainty_Parameter +
+                     # Uncertainty_Distribution + Grain_size + Data +
+                     # Random effects
+                     ## Studies
+                     (1|Article_ID)+
+                     ## Taxonomy
+                     (1|Group),
+                   # weight by distance of genetic data to range shift data
+                   # weights = dist_weight,
+                   family = gaussian(),
+                   data = model_data,
+                   na.action = "na.fail")
+
+baseline <- glmer(SHIFT ~ 
+                    # Fixed effects
+                    ## Ecology
+                    velocity*Exp_Cont +
+                    ## Control Methods
+                    # START + ID.area + Sampling + Uncertainty_Parameter +
+                    # Uncertainty_Distribution + Grain_size + Data +
+                    # Random effects
+                    ## Studies
+                    (1|Article_ID)+
+                    ## Taxonomy
+                    (1|Group),
+                  # weight by distance of genetic data to range shift data
+                  # weights = dist_weight,
+                  family = gaussian(),
+                  data = model_data,
+                  na.action = "na.fail")
+
+
+AIC(bestmodel,baseline)
+
+plot(simulateResiduals(bestmodel))
+
+summary(bestmodel)
+
+tmp <- effects::allEffects(bestmodel)
+plot(tmp$`velocity:He:Exp_Cont`)
+
+plot(effect("He*Exp_Cont", bestmodel)) # He leads faster expansion in the same direction of velocity.
+plot(effect("velocity:Exp_Cont", bestmodel)) # Velocity leads faster expansion in the same direction of velocity.
+
+```
+
+
+
