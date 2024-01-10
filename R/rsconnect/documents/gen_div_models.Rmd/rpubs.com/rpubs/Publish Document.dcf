@@ -1,0 +1,11 @@
+name: Publish Document
+title:
+username:
+account: rpubs
+server: rpubs.com
+hostUrl: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/1025579/cf5625fb95644a5fb8fa6c30b3073ca0
+bundleId: https://api.rpubs.com/api/v1/document/1025579/cf5625fb95644a5fb8fa6c30b3073ca0
+url: http://rpubs.com/Rplayground/1025579
+when: 1690583363.2498
+lastSyncTime: 1690583363.24981
