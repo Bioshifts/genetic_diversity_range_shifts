@@ -9,6 +9,7 @@ output:
     code_folding: show
 ---
 
+
 # Load libraries
 
 ```{r libs, message=FALSE}
@@ -20,7 +21,7 @@ rm(list=ls())
 list.of.packages <- c(
   "ggplot2", "data.table", "glmmTMB", "lme4", "lmerTest","mgcv","itsadug","mgcViz","pbapply",
   # "lme4", "coefplot", "sjPlot", "sjmisc", "effects", "rgdal", "maptools", "terra", "MuMIn", "lsmeans", "GGally", "tidyterra", "DHARMa",
-  "dplyr", "tidyr", "tidyverse","parallel","ggstats","optimx","broom.mixed"
+  "dplyr", "tidyr", "tidyverse","parallel","ggstats","optimx","broom.mixed","plotly"
 ) 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -29,7 +30,10 @@ if(length(new.packages)) install.packages(new.packages)
 
 sapply(list.of.packages, require, character.only = TRUE)
 
+source(here::here("R/vis.gam.data_function.R"))
+
 ```
+
 
 # Load data
 
@@ -537,7 +541,7 @@ anova(gau1,gam1)
 The Gaussian model have lower AIC. Use Gaussian model then!
 
 
-#### **Interpretation of results**
+#### Interpretation of results
 Effect of GD is negative, meaning that species range shift less with high GD. Therefore, GD increases species' ability to stay in place.
 
 Interaction of GD:Lat is positive, suggesting that at higher latitudes a higher GD leads to faster shifts.
@@ -732,7 +736,7 @@ AIC(gau11,gau13)
 
 ```
 
-###**Interpretation of results**
+### Interpretation of results 
 Range shifts are positively associated with climate velocity, suggesting shift magnitudes increase with climate exposure. Range shifts are negatively correlated with Tajima's D, suggesting species that show signature of population contraction shift less. Moreover, the interaction term indicates range shifts are positively associated with climate velocity when Tajima's D is positive (evidence of population contraction). This indicates that under populations contraction, species tend to track climate change more closely (otherwise they go extinct). In contrast, when populations expand species are more likely to remain in place and don't move to track climate change. 
 
 
@@ -801,16 +805,25 @@ summary(GD_gamm3$gam)
 
 anova(GD_gamm2$lme, GD_gamm3$lme)
 
+
 ```
 
 There is no difference between model 2 and 3. I will keep model 3 as it leads to higher r-squared and <P-values for the interaction term...
 
-```{r }
+```{r fig.height=5, fig.width=5}
 
-vis.gam(GD_gamm3$gam, 
-        view = c("GD_sqrt_scale","vel_abs_log_scale"), 
-        n.grid = 10, 
-        theta = 45)
+dataplot <- vis.gam.data(GD_gamm3$gam, 
+                         view = c("GD_sqrt_scale","vel_abs_log_scale"), 
+                         n.grid = 10, 
+                         theta = 45)
+GD <- dataplot[[2]]
+Velocity <- dataplot[[1]]
+Response = dataplot[[3]]
+
+plot_ly(x = ~Velocity, y = ~GD, z = ~Response, type = "surface") %>% 
+  layout(scene = list(
+    aspectmode='cube',
+    yaxis = list(autorange = "reversed")))
 
 ```
 
@@ -834,9 +847,10 @@ summary(GD_gamm4$gam)
 anova(GD_gamm3$lme, GD_gamm4$lme)
 
 ```
- No!
- 
- 
+
+No!
+
+
 ## GAMM: Tajima's vs velocity
 
 ```{r height=5, fig.width=5}
@@ -872,10 +886,19 @@ summary(Taj_gamm2$gam)
 
 
 ```{r height=10, fig.width=10}
-vis.gam(Taj_gamm2$gam, 
-        view = c("TajimasD","vel_abs_log_scale"), 
-        n.grid = 10, 
-        theta = 45)
+dataplot <- vis.gam.data(Taj_gamm2$gam, 
+                         view = c("TajimasD","vel_abs_log_scale"), 
+                         n.grid = 10, 
+                         theta = 45)
+TajimasD <- dataplot[[2]]
+Velocity <- dataplot[[1]]
+Response = dataplot[[3]]
+
+plot_ly(x = ~Velocity, y = ~TajimasD, z = ~Response, type = "surface") %>% 
+  layout(scene = list(
+    aspectmode='cube',
+    yaxis = list(autorange = "reversed")))
+
 ```
 
 # Elevation models
