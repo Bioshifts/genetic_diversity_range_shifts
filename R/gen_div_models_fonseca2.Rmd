@@ -1058,7 +1058,7 @@ Taj_gamm2 <- gamm(
     Class=~1), # random effect of Study
   data = mydatatogo)
 
-summary(Taj_gamm2$gam)
+summary(Taj_gamm2$gam) 
 
 ```
 
