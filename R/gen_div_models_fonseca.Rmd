@@ -20,7 +20,6 @@ rm(list=ls())
 
 list.of.packages <- c(
   "ggplot2", "data.table", "glmmTMB", "lme4", "lmerTest","mgcv","itsadug","mgcViz","pbapply",
-  # "lme4", "coefplot", "sjPlot", "sjmisc", "effects", "rgdal", "maptools", "terra", "MuMIn", "lsmeans", "GGally", "tidyterra", "DHARMa",
   "dplyr", "tidyr", "tidyverse","parallel","ggstats","optimx","broom.mixed","plotly"
 ) 
 

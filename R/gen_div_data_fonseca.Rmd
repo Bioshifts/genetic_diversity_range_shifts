@@ -48,17 +48,17 @@ sapply(list.of.packages, require, character.only = TRUE)
 # write GITHUB_PAT=YOUR_TOKEN
 # Sys.getenv("GITHUB_PAT")
 
-source(here::here("R/fetchGHdata.R"))
-
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "bioshifts_v1_v2", 
-            path = "R/Source_code/Clean_names.R",
-            output = here::here("R/Clean_names.R"))
-
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "bioshifts_v1_v2", 
-            path = "R/Source_code/Find_Sci_Names.R",
-            output = here::here("R/Find_Sci_Names.R"))
+# source(here::here("R/fetchGHdata.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Clean_names.R",
+#             output = here::here("R/Clean_names.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Find_Sci_Names.R",
+#             output = here::here("R/Find_Sci_Names.R"))
 
 source(here::here("R/Clean_names.R"))
 source(here::here("R/Find_Sci_Names.R"))
@@ -469,10 +469,10 @@ Just load it in
 
 ```{r}
 
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "MethodologicalAdjustment", 
-            path = "outputs/biov1_method_corrected_shifts_study_level.csv",
-            output = here::here("Data/biov1_method_corrected_shifts_study_level.csv"))
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "MethodologicalAdjustment", 
+#             path = "outputs/biov1_method_corrected_shifts_study_level.csv",
+#             output = here::here("Data/biov1_method_corrected_shifts_study_level.csv"))
 
 biov1_corr <- read.csv(here::here("Data/biov1_method_corrected_shifts_study_level.csv"))
 
