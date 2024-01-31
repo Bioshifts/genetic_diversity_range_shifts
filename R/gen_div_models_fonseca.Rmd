@@ -9,19 +9,21 @@ output:
     code_folding: show
 ---
 
+# Load in data
 
-# Load libraries
+## Load libraries
 
-```{r libs, message=FALSE}
+```{r libs, message=FALSE, warning=FALSE}
 
 # remotes::install_github("bbolker/broom.mixed")
 
 rm(list=ls())
 
 list.of.packages <- c(
-  "ggplot2", "data.table", "glmmTMB", "lme4", "lmerTest","mgcv","itsadug","mgcViz","pbapply",
-  "dplyr", "tidyr", "tidyverse","parallel","ggstats","optimx","broom.mixed","plotly"
-) 
+  "ggplot2", "data.table", "glmmTMB", "lme4", "lmerTest","mgcv","brms",
+  "itsadug","mgcViz","pbapply",
+  "dplyr", "tidyr", "tidyverse","parallel","ggstats","optimx","broom.mixed","plotly",
+  "partR2","scales","patchwork","effects","psych") 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -30,20 +32,38 @@ if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
 
 source(here::here("R/vis.gam.data_function.R"))
+source(here::here("R/rsqglmm.R"))
+
 
 ```
 
-
-# Load data
+## Load data
 
 ```{r splist}
 
-# Use only Fonseca
-# mydataset <- read.csv(here::here("Data/gen_data_final_m5.csv"))
-# mydataset <- mydataset %>% filter(Source == "Fonseca")
+mydataset <- read.csv(here::here("Data/gen_data_final_fonseca.csv"))
 
-mydataset <- read.csv(here::here("Data/gen_data_final_m2_fonseca.csv"))
+```
 
+## Select only shifts in the same direction of velocity
+
+```{r}
+
+mydataset <- mydataset %>%
+  filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+# 
+# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
+# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
+# 
+# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
+# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
+
+
+```
+
+## Initial data description
+
+```{r }
 # how many data at each shift gradient
 mydataset %>%
   group_by(Type) %>%
@@ -65,206 +85,219 @@ summary(mydataset$velocity[which(mydataset$SHIFT<0)])
 
 ```
 
-# Data description
+## Latitude data
 
-# Select only shifts in the same direction of velocity
-```{r}
-
-mydataset <- mydataset %>%
-  filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
-# 
-# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
-# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
-# 
-# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
-# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
-
-
-```
-
-# Select groups with at least 5 observations and all three parameters
-```{r}
-
-n_groups = 5
-
-type_groups_lat <- mydataset %>%
-  filter(Type == "LAT") %>%
-  group_by(Group,Param) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>n_groups) %>%
-  group_by(Group) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>=3)
-
-type_groups_ele <- mydataset %>%
-  filter(Type == "ELE") %>%
-  group_by(Group,Param) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>n_groups) %>%
-  group_by(Group) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>=3)
-
-mydataset <- mydataset %>%
-  dplyr::filter((Type == "LAT" & Group %in% type_groups_lat$Group) | (Type == "ELE" & Group %in% type_groups_ele$Group))
-
-```
-
-# Remove outliers in shift
-
-```{r message=FALSE}
-
-# LAT
-LAT_obs <- mydataset %>% 
-  filter(Type == "LAT")
-
-summary(LAT_obs$SHIFT_abs)
-hist(LAT_obs$SHIFT_abs)
-
-thr <- quantile(LAT_obs$SHIFT_abs,c(.01,0.99))
-thr
-
-rem <- which((LAT_obs$SHIFT_abs > thr[1]) & (LAT_obs$SHIFT_abs < thr[2]))
-if(any(rem)){
-  LAT_obs <- LAT_obs[rem,]
-}
-summary(LAT_obs$SHIFT_abs)
-hist(LAT_obs$SHIFT_abs)
-
-hist(sqrt(LAT_obs$SHIFT_abs))
-
-
-# ELE
-ELE_obs <- mydataset %>% 
-  filter(Type == "ELE")
-
-summary(ELE_obs$SHIFT_abs)
-hist(ELE_obs$SHIFT_abs)
-
-thr <- quantile(ELE_obs$SHIFT_abs,c(.01,0.99))
-thr
-
-rem <- which((ELE_obs$SHIFT_abs > thr[1]) & (ELE_obs$SHIFT_abs < thr[2]))
-if(any(rem)){
-  ELE_obs <- ELE_obs[rem,]
-}
-summary(ELE_obs$SHIFT_abs)
-hist(ELE_obs$SHIFT_abs)
-
-hist(sqrt(ELE_obs$SHIFT_abs))
-
-# Combine
-mydataset <- rbind(LAT_obs,ELE_obs)
-hist(mydataset$SHIFT_abs)
-hist(sqrt(mydataset$SHIFT_abs))
-
-
-```
-
-# Stats
-```{r}
-
-# N species
-length(unique(mydataset$spp))
-
-# N shifts
-dim(mydataset)
-
-```
-
-
-# Latitude models
-
-```{r message=FALSE}
+```{r message=FALSE, warning=FALSE}
 
 mydatatogo <- mydataset  %>%
-  dplyr::filter(Type == "LAT") %>%
+  dplyr::filter(Type == "LAT",
+                SHIFT != 0, # remove non-significant shifts
+                # Nucleotide_diversity > 0 # select only GD values > 0
+  ) %>% 
   mutate(
-    vel_raw = velocity,
-    vel = scale(vel_raw),
-    vel_abs = abs(vel_raw),
-    vel_abs_scale = scale(vel_abs),
+    # Climate velocity
+    vel = as.numeric(velocity),
+    vel_abs = abs(vel),
     vel_abs_log = log(vel_abs),
-    vel_abs_log_scale = scale(vel_abs_log),
-    vel_abs_sqrt = sqrt(vel_abs),
-    vel_abs_sqrt_scale = scale(vel_abs_sqrt),
+    vel_abs_log1p = log1p(vel_abs),
     
-    SHIFT_raw = SHIFT,
-    SHIFT = scale(SHIFT_raw),
-    SHIFT_abs = abs(SHIFT_raw),
+    # Shift
+    SHIFT = SHIFT, # to deal with zero shift
+    SHIFT_abs = abs(SHIFT),
     SHIFT_abs_log = log(SHIFT_abs),
-    SHIFT_abs_log_scale = scale(SHIFT_abs_log),
+    SHIFT_abs_log1p = log1p(SHIFT_abs),
     
-    SHIFT_cor_raw = SHIFT_cor,
-    SHIFT_cor = scale(SHIFT_cor_raw),
-    SHIFT_cor_abs = abs(SHIFT_cor_raw),
-    SHIFT_cor_abs_log = log(SHIFT_cor_abs),
-    SHIFT_cor_abs_log_scale = scale(SHIFT_abs_log),
+    # SHIFT_cor_raw = SHIFT_cor,
+    # SHIFT_cor = scale(SHIFT_cor_raw),
+    # SHIFT_cor_abs = abs(SHIFT_cor_raw),
+    # SHIFT_cor_abs_log = log(SHIFT_cor_abs),
+    # SHIFT_cor_abs_log_scale = scale(SHIFT_abs_log),
     
+    # Genetic diversity
+    GD = Nucleotide_diversity, 
+    GD_sqrt = sqrt(GD),
+    GD_log = log(GD),
+    GD_log1p = log1p(GD),
+    
+    # Methods
+    Lat = abs(Latitude),
+    Lat_band = round(Lat,0),
     ID.area = scale(ID.area),
     DUR = scale(DUR),
     LogExtent = log(Extent),
-    Lat = abs(Latitude),
-    
     START = scale(START),
     Param = factor(Param),
     Group = factor(Group),
-    spp = factor(spp),
-    
-    GD = Nucleotide_diversity,
-    GD_sqrt = sqrt(GD),
-    GD_scale = scale(GD),
-    GD_sqrt_scale = scale(GD_sqrt)) %>%
+    spp = factor(spp)) %>%
   
   dplyr::select(
-    GD, GD_sqrt, GD_scale, GD_sqrt_scale, Lat, TajimasD, overlap_SA, R2,
-    SHIFT, SHIFT_abs, SHIFT_abs_log, SHIFT_raw, SHIFT_abs_log_scale,
-    SHIFT_cor, SHIFT_cor_abs, SHIFT_cor_abs_log, SHIFT_cor_raw, SHIFT_abs_log_scale,
-    vel, vel_abs, vel_abs_scale, vel_abs_log, vel_raw, vel_abs_log_scale, vel_abs_sqrt, vel_abs_sqrt_scale,
-    # min_dist, dist_weight,
-    START, DUR, ID.area, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, AreaF,
+    # Genetic diversity
+    GD, GD_log, GD_log1p, GD_sqrt, TajimasD,
+    # Shift
+    SHIFT, SHIFT_abs, SHIFT_abs_log, SHIFT_abs_log1p, 
+    # SHIFT_cor, SHIFT_cor_abs, SHIFT_cor_abs_log, SHIFT_cor_raw, SHIFT_abs_log_scale,
+    # Velocity
+    vel, vel_abs, vel_abs_log, vel_abs_log1p, 
+    trend.mean,
+    # Methods + Taxonomy
+    Article_ID, 
+    Lat, # latitudinal position where GD was collected
+    Lat_band,
+    DUR, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, AreaF,
     Param, Group, spp, Class, Order, Family, Genus, 
-    ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Sampling, Article_ID,
-    # Marker,
-    shift_vel_sign)
+    ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Article_ID,
+    # whereas GD data overlaps with the range shift's study area
+    overlap_SA,
+    # Distance from GD data to Bioshifts SA
+    dist_cent, # distance to the centroid of the SA
+    dist_N, # distance to the North edge of the SA (equivalent to the distance to the LE at the North hemisphere)
+    dist_S, # distance to the South edge of the SA (equivalent to the distance to the TE at the North hemisphere)
+    dist_edge # distance to the closest edge of the SA
+  ) 
 
-mydatatogo[,1:33] <- lapply(mydatatogo[,1:33], as.numeric)
+cont_vars <- c(1:14, 16:24, 39:45)
 
-mydatatogo <- data.frame(na.omit(mydatatogo))
+mydatatogo[,cont_vars] <- lapply(mydatatogo[,cont_vars], as.numeric)
+mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
 
-mydatatogo$Article_ID <- as.factor(mydatatogo$Article_ID)
-mydatatogo$Param <- as.factor(mydatatogo$Param)
-mydatatogo$Class <- as.factor(mydatatogo$Class)
-mydatatogo$Quality <- as.factor(mydatatogo$Quality)
-mydatatogo$PrAb <- as.factor(mydatatogo$PrAb)
-mydatatogo$ContinuousGrain <- as.numeric(mydatatogo$ContinuousGrain)
 
-table(mydatatogo$Group)
-# Bird   Fish Insect  Plant 
-# 1273    228   1735    812 
+```
 
-table(mydatatogo$Class)
-# Actinopterygii            Aves       Bryopsida Florideophyceae         Insecta      Liliopsida 
-#             228            1273               2               1            1735             136 
-# Magnoliopsida       Pinopsida  Polypodiopsida 
-#             636              13              24 
+## Filter Classes with at least 5 species per Param
 
-mydatatogo <- filter(mydatatogo, Class %in% names(which(table(mydatatogo$Class) > 10)))
-table(mydatatogo$Class)
-# Actinopterygii           Aves        Insecta     Liliopsida  Magnoliopsida      Pinopsida Polypodiopsida 
-#            228           1273           1735            136            636             13             24 
+```{r}
 
-# N dataset
-nrow(mydatatogo)
-# nrow(mydatatogo %>% dplyr::filter(GD > 0))
+n_sps = 10
+
+test <- mydatatogo %>%
+  group_by(Class,Param) %>%
+  dplyr::summarise(N_spp = length(unique(spp))) %>% # how many species per parameter?
+  dplyr::filter(N_spp >= n_sps) # select classes with > n_sps per param
+
+test <- mutate(test, Class_Param = paste(Class, Param))
+
+mydatatogo <- mydatatogo %>%
+  mutate(Class_Param = paste(Class, Param)) %>%
+  filter(Class_Param %in% test$Class_Param) %>%
+  select(-Class_Param)
+
+mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
+
+```
+
+## Extra fixes
+
+```{r}
+# # Fix latitudinal bands
+# similar <- function(vec, val, bound = 3, index = F) {
+#   close.index <- which(abs(vec - val) <= bound)
+#   if (index) return(close.index)
+#   return(vec[close.index])
+# }
+# 
+# mydatatogo$Lat_band <- cut(mydatatogo$Lat_band,
+#                            breaks=seq(0, 90, by=10),
+#                            include.lowest=TRUE)
+# 
+# table(mydatatogo$Lat_band)
+# 
+# mydatatogo$Lat_band[which(mydatatogo$Lat_band=="(80,90]")] <- "(60,70]"
+# mydatatogo$Lat_band[which(mydatatogo$Lat_band=="(70,80]")] <- "(60,70]"
+# 
+# mydatatogo$Lat_band <- factor(mydatatogo$Lat_band, 
+#                               levels = names(which(table(mydatatogo$Lat_band)>0)))
+# table(mydatatogo$Lat_band)
+
+# Fix param levels
+mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
+
+# Cut GD
+mydatatogo$GD_cut <- cut(mydatatogo$GD_sqrt,
+                         breaks=seq(min(mydatatogo$GD_sqrt), max(mydatatogo$GD_sqrt), length.out = 5),
+                         include.lowest=TRUE)
+
+```
+
+# Modelling framework
+
+Here we test the potential of genetic diversity (GD) in modulating species responses to climate exposure by shifting their ranges. GD is an important component of biodiversity because it provides adaptive potential (Frankham, 2005), facilitates species persistence (Frankham, 2005; Pereira et al., 2012), and provides clues about the historical demography of species (Avise, 2000). We contrast to hypotheses by which GD modulates species response to climate exposure. The first hypothesis proposes GD allows species to better track climate change. In this scenario, GD would confer species' adaptive potential to rapidly colonize new areas that become suitable from climate change. The second hypothesis states that GD allows species to stay in place as climate change. In this scenario GD increases plasticity or fast evolution for the development of adaptations to tolerate new climate conditions.
+
+## Data
+
+Genetic diversity (GD) data was extracted from Fonseca et al. (2023), describing patterns of intraspecific nucleotide diversity. Nucleotide diversity was calculated from aggregated georeferenced mitochondrial DNA for animals (vertebrates, arachnids, and insects) and chloroplast DNA for plants using `phylogatR` (Pelletier et al., 2021; <https://phylogatr.osc.edu>), an open-source platform available through the Ohio Supercomputer Center (OSC). `phylogatR` retrieves genetic and geographic data by integrating information from the GBIF (<https://www.gbif.org/>), GenBank (<https://> www.ncbi.nlm.nih.gov/genbank/), and the BOLD (<http://www>. boldsystems.org/index.php). To minimize data loss and duplication when downloading data from GenBank, duplicate entries with the same accession number, but different GBIF occurrence numbers are checked for similarities in geographic coordinates. Sequences with high values of divergence were removed (likely resulting from inclusion of a sequence with an incorrect species label), a conservative approach that prevents inflation on the calculation of genetic diversity within species. Nucleotide diversity was calculated as the number of polymorphic sites in pairwise sequence comparison, using a modified version of the equation proposed by Nei and Li (1979) to allow for a comparison of sequences of different lengths (Miraldo et al. 2016). Finally, nucleotide diversity between pairs of sequences were averaged to obtain a global estimation of nucleotide diversity for each species, and associated centroid of georeferenced DNA sequences.
+
+We gather range shift estimates from the BioShifts database (Comte et al. 2020). These shift estimates were collated from multiple published literature sources that used different methodological protocols. Previous studies have shown that methodological aspects play an important role in explaining variability in species range shifts (Lenoir et al. 2020). Beyond range shift data, we also gathered from BioShifts climate velocity estimates following the method from Burrows at al. (2014), the position of a species range where range shifts were estimated (leading edge, centroid or trailing edge), and methodological variables representing the number of temporal units (continuous), grain size (small, moderate or large), data type (abundance-based vs occurrence-based), quality (balanced, raw, resurveyed), and study area extent (log km). We focus on latitudinal shifts across terrestrial and marine organisms, excluding elevational range shifts. We also excluded range shifts at the opposite direction of the climate exposure gradient, which can be related to local extinction processes or because species may be tracking climate axes other then temperature (e.g., humidity).
+
+In order to maximize the match of species when merging range shifts and GD datasets, we harmonize species names using a customized function that borrows from the R packages `rgbif` and `bdc`. Our final dataset includes `r nrow(mydatatogo)` shifts for `r length(unique(mydatatogo$spp))` species from `r length(unique(mydatatogo$Class))` major taxonomy classes (`r unique(mydatatogo$Class)`).
+
+## Statistics
+
+We explore how species range shifts (km/year) (response variable) varies in function of climate change velocity (km/year) and GD (Nucleotide diversity) using a linear mixed-effect (LME) modelling framework. Our goal is to estimate whereas GD increases (or decreases) species range shift in response to climate change velocity. Therefore, our model includes an interaction term of genetic diversity with climate change velocity. To account for methodological differences in range shift estimates, we included the methodological variables from BioShifts described above as fixed-effect terms in our models. As our dataset comprises species across multiple taxonomic classes, with different ecology and sensitivity to climate variability, observations are considered as non-independent from each other. Flight capacity would confer birds greater dispersal potential than plants, ectotherms and short lived like insects should be more sensitive to climate variability than endotherms like fishes. We control for taxonomy and ecological variability by including Class as a random-intercept in our model:
+
+$$
+Range Shift = Climate Velocity * Genetid Diversity + Methods + (1|Class)
+$$
+
+We model absolute values for range shifts and climate velocity as we expect GD to impact the magnitude of the coupling between range shifts and climate velocity, not the direction of this relationship. As we are modeling positive values, we fitted our LME models using a Gamma family with a log link. In addition to these models, we also fitted Gaussian models using log-transformed values of range shift and climate velocity. We test wheres the modulating effect of GD varies across the multiple range positions. Different levels of exposure are expected at different positions of a species range, thereby leading to influencing ecological dynamics. At the warm edge species leave closer to their upper thermal tolerance limit and thus should be more sensitive to warming. In contrast, a warming at the cold edge may represent colonization opportunity. Because GD is at the intraspecific scale, a single GD value can be matched to multiple estimates of range shift estimates across different positions of the range for the same species. To avoid false duplicate data, we run separate analyses to the different range positions.
+
+
+
+
+# Data description
+
+```{r message=FALSE, warning=FALSE}
 
 # N species
 length(unique(mydatatogo$spp))
-# 1722
+# 1890
 
-mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
+# N shifts
+nrow(mydatatogo)
+# 4675
 
+# N shifts per Class
+mydatatogo %>% group_by(Class) %>% tally
+#   Class              n
+# 1 Insecta         1751
+# 2 Aves            1611
+# 3 Magnoliopsida    664
+# 4 Polypodiopsida    23
+# 5 Arachnida        248
+# 6 Liliopsida       143
+# 7 Actinopterygii   235
+
+# N shifts per range position
 table(mydatatogo$Param)
+#    O   LE   TE 
+# 2298 2082  295
+
+# N shifts per Class and range position
+mydatatogo %>% group_by(Class,Param) %>% tally
+#            Class Param    n
+
+#  1 Insecta        O       195
+#  2 Insecta        LE     1435
+#  3 Insecta        TE      121
+
+#  4 Aves           O      1275
+#  5 Aves           LE      260
+#  6 Aves           TE       76
+
+#  7 Magnoliopsida  O       496
+#  8 Magnoliopsida  LE      100
+#  9 Magnoliopsida  TE       68
+
+# 10 Polypodiopsida O        23
+
+# 11 Arachnida      LE      248
+
+# 12 Liliopsida     O       108
+# 13 Liliopsida     LE       23
+# 14 Liliopsida     TE       12
+
+# 15 Actinopterygii O       201
+# 16 Actinopterygii LE       16
+# 17 Actinopterygii TE       18
 
 table(mydatatogo$ContinuousGrain)
 
@@ -272,16 +305,15 @@ table(mydatatogo$Quality)
 
 table(mydatatogo$PrAb)
 
-table(mydatatogo$ExtentF)
-
 table(mydatatogo$Order)
 
 ```
 
-
 ## Histograms
+
 ### Shift
-```{r message=FALSE}
+
+```{r message=FALSE, warning=FALSE}
 
 hist(mydatatogo$SHIFT_abs)
 hist(mydatatogo$SHIFT_abs_log)
@@ -289,803 +321,1049 @@ hist(mydatatogo$SHIFT_abs_log)
 ```
 
 ### GD
-```{r message=FALSE}
+
+```{r message=FALSE, warning=FALSE}
+
 hist(mydatatogo$GD)
-hist(mydatatogo$GD_sqrt)
+hist(mydatatogo$GD_log)
 
-### GD vs Group
+### GD vs Class
+ggplot(mydatatogo, aes(GD_log))+
+  geom_density(aes(fill = Class), color = NA, alpha = .3)+
+  theme_classic() +
+  labs(y = "Density", x = "Nucleotide diversity (log)")
 
-ggplot(mydatatogo,
-       aes(GD_sqrt, fill = Group, color = Group))+
-  geom_density(alpha = .3)+
-  theme_bw()
-
-m <- aov(GD_sqrt ~ Group, mydatatogo)
+m <- aov(log1p(GD) ~ Class, mydatatogo)
 summary(m)
 TukeyHSD(m)
 
 ```
 
+Genetic diversity differs among classes! The exception was for the classes Aves and Insecta, which mean GD is not different.
+
 ### Velocity
-```{r message=FALSE}
+
+```{r message=FALSE, warning=FALSE}
+
 hist(mydatatogo$vel_abs)
 hist(mydatatogo$vel_abs_log)
+
 ```
 
 We should use SHIFT_abs with a Gamma family or SHIFT_abs_log in a gaussian family.
 
+### Distance of GD data and range shift data
+
+```{r message=FALSE, warning=FALSE}
+
+hist(mydatatogo$dist_cent/1000, main = "Distance from study area centroid", xlab = "Distance in km")
+hist(mydatatogo$dist_edge/1000, main = "Distance from the edge of study area", xlab = "Distance in km")
+
+```
+
 ## Scatter plots
 
-### SHIFT_abs vs velocity_abs
-```{r message=FALSE, fig.width=5, fig.height=5}
+### SHIFT vs Velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
 ggplot(mydatatogo,
        aes(x=vel_abs, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-```
-
-### SHIFT_abs_log vs velocity_abs_log
-
-```{r message=FALSE, fig.width=5, fig.height=5}
-
-ggplot(mydatatogo,
-       aes(x=vel_abs_log, y=SHIFT_abs_log))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-```
-
-### SHIFT_abs vs GD
-```{r message=FALSE, fig.width=5, fig.height=5}
-ggplot(mydatatogo,
-       aes(x=GD, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=GD, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=GD, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()+ 
-  facet_wrap(.~Group, scales = "free")
-```
-
-### SHIFT_abs_log vs GD_sqrt
-
-```{r message=FALSE, fig.width=5, fig.height=5}
-
-ggplot(mydatatogo,
-       aes(x=GD_sqrt, y=SHIFT_abs_log))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=GD_sqrt, y=SHIFT_abs_log))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()+ 
-  facet_wrap(.~Class, scales = "free")
-
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Range shift (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red")
 
 ```
 
-### SHIFT_abs vs Tajima's D
-```{r message=FALSE, fig.width=5, fig.height=5}
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
 ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()+ 
-  facet_wrap(.~Group, scales = "free")
-```
-
-### SHIFT_abs_log vs Tajima's D
-
-```{r message=FALSE, fig.width=5, fig.height=5}
-ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs_log))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs_log))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()+ 
-  facet_wrap(.~Group, scales = "free")
-
+       aes(x=vel_abs, y=SHIFT_abs))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Range shift (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
 
 ```
 
+### SHIFT vs GD
 
-
-
-
-### Tajima's D vs GD_sqrt
-```{r message=FALSE, fig.width=5, fig.height=5}
+```{r fig.width=5, fig.height=5, message=FALSE, warning=FALSE}
 
 ggplot(mydatatogo,
-       aes(x=TajimasD, y=GD_sqrt))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
-
-ggplot(mydatatogo,
-       aes(x=TajimasD, y=GD_sqrt, color = Group))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
+       aes(x=GD, y=SHIFT_abs,color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Nucleotide diversity", 
+       y = "Range shift (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red")
 
 ```
 
-### Tajima's D vs Velocity
-```{r message=FALSE, fig.width=5, fig.height=5}
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
 
 ggplot(mydatatogo,
-       aes(x=vel_abs, y=TajimasD))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
+       aes(x=GD, y=SHIFT_abs,color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Nucleotide diversity", 
+       y = "Range shift (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
 
 ```
 
-### Tajima's D vs Velocity_abs_log
-```{r message=FALSE, fig.width=5, fig.height=5}
-
+```{r fig.height=7, fig.width=9, message=FALSE, warning=FALSE}
 ggplot(mydatatogo,
-       aes(x=vel_abs_log, y=TajimasD))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
+       aes(x=GD, y=SHIFT_abs, color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .3, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Nucleotide diversity", 
+       y = "Range shift (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(Class~., scales = "free")
 
 ```
 
 ### GD vs Velocity
-```{r message=FALSE, fig.width=5, fig.height=5}
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
 
 ggplot(mydatatogo,
        aes(x=vel_abs, y=GD))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = "Climate change velocity (abs)\nkm/year", 
+       y = "Nucleotide diversity") +
+  geom_smooth(method = "lm", color = "red")
 
 ```
 
-### GD vs Velocity_abs_log
-```{r message=FALSE, fig.width=5, fig.height=5}
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=GD))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = "Climate change velocity (abs)\nkm/year", 
+       y = "Nucleotide diversity") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+```
+
+### SHIFT vs TajimasD
+
+```{r fig.width=5, fig.height=5, message=FALSE, warning=FALSE}
 
 ggplot(mydatatogo,
-       aes(x=vel_abs_log, y=GD))+
-  geom_point(alpha = .5, size = 2)+
-  theme_bw()+
-  geom_smooth()
+       aes(x=TajimasD, y=SHIFT_abs,color=vel_abs))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Tajima's D", 
+       y = "Range shift velocity (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red")
 
 ```
 
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=TajimasD, y=SHIFT_abs_log, color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), max(mydatatogo$SHIFT_abs_log), length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Tajima's D", 
+       y = "Range shift velocity (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+```
+
+```{r fig.height=7.5, fig.width=8, message=FALSE, warning=FALSE}
+
+ggplot(mydatatogo,
+       aes(x=TajimasD, y=SHIFT_abs_log, color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), max(mydatatogo$SHIFT_abs_log), length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Tajima's D", 
+       y = "Range shift velocity (abs)\nkm/year", 
+       color = "Climate change velocity (abs)\nkm/year") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(Class~., scales = "free")
+
+```
+
+### Tajima's D vs Velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=TajimasD))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = "Climate change velocity (abs)\nkm/year", 
+       y = "Tajima's D") +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=TajimasD))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = "Climate change velocity (abs)\nkm/year", 
+       y = "Tajima's D") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+```
 
 
+## Spatial distribution of data
 
+```{r out.height = "700px", out.width='800px', echo=F}
 
+knitr::include_graphics("./images/Map2.pdf")
 
+```
 
+# Models
 
+## Centroid model
 
+We first test if the species range shift varies in function of both climate change velocity, genetic diversity and the interaction between these two variables, while account for methodology and phylogeny.
 
+### Gaussian model
 
-## Modelling framework
-
-Here we test the importance of intra-specific genetic diversity (GD) in modulating the response of species to climate exposure by shifting their ranges. 
-GD is an important component of biodiversity because it provides adaptive potential (Frankham, 2005), facilitates species persistence (Frankham, 2005; Pereira et al., 2012), and provides clues about the historical demography of species (Avise, 2000). We expect that high GD would allow species to move faster to track climate change if its confers species' a higher potential to colonize new areas by increasing adaptive potential to the new community composition in newly colonized places. In contrast, high GD would allow species to stay in place if it confers species with higher plasticity or development of adaptations to tolerate new climate conditions.
-
-Our modelling framework aims at exploring how species range shifts (km/year) (response variable) varies in function of climate change velocity (km/year) and GD (Nucleotide diversity). Specifically, our goal was to estimate whereas GD increases or decreases species range shift velocities in response to climate change velocity. Therefore, our model includes an interaction term of genetic diversity with climate change velocity.
-
-Quaternary glaciation has long been recognized as a potential cause of spatial variation in genetic diversity (Hewitt, 2004). During the Quaternary, cyclical global cooling coupled with ice sheet advance and retreat promoted considerable demographic change and extinction (Hewitt, 2004; Nogués-Bravo et al., 2010). In order to control for potential confounding effect of Quaternary glaciation on genetic processes, we used the interaction term of GD with absolute latitude as a predictor variable. We did not include an interaction term of latitude with climate change velocity as we don't want to erase the fact that climate velocity is usually higher at high latitudes.
-
-Our database comprise species across multiple taxonomic classes, with obvious differences in their ecologies and sensitivity to climate variability, which therefore causes observations to be non-independent from each other. We classify species in 4 major taxonomy groups (birds, plants, insects or fishes) in order to account for ecological differences among them (e.g., flight capacity would confer birds greater dispersal potential than plants, ectotherms and short lived like insects should be more sensitive to climate variability than endotherms like fishes). In order to control for taxonomy and ecological variability, we model Family and Genus nested into taxonomy group as a random intercept .
-
-Our range shift estimates were gather from multiple literature sources. These shift estimates were collated using different methodological protocols, which cause non-independence among observations. Previous studies have shown that methodological aspects play an important role in explaining variability in species range shifts (Lenoir et al. 2020). To account for methodological differences in range shift estimates, we included range position nested within study ID as a random intercept. In addition to the random effect, we included fixed effects methodological variables representing number of temporal units, grain size (small, moderate or large), data type (abundance-based vs occurrence-based) and study area extent (log km). Removing these methodological variables from the model resulted in meaningless change in AIC, therefore we decided for keeping them out as to have a more parsimonious model. Finally, we also included a random effect to the study ID and range edge location (leading edge, trailing edge, centroid) from which range shifts were estimated. 
-
-## GLM: GD vs velocity
-
-### Gaussian vs Gamma model
 ```{r}
 
-gau1 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  data = mydatatogo)
+# Model with zero GD
+gau1_O <- lmer(SHIFT_abs_log ~ vel_abs_log * GD + 
+                 # LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                 (1 | Class/Family), 
+               data = mydatatogo %>%
+                 filter(Param=="O"))
+summary(gau1_O)
+round(MuMIn::r.squaredGLMM(gau1_O),2)
+AIC(gau1_O)
 
-# Works!
-summary(gau1)
+# Model without zero GD
+gau2_O <- lmer(SHIFT_abs_log ~ vel_abs_log * GD +
+                 # LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                 (1 | Class/Family), 
+               data = mydatatogo %>%
+                 filter(Param=="O") %>% 
+                 filter_all(all_vars(!is.infinite(.))))
+summary(gau2_O)
+round(MuMIn::r.squaredGLMM(gau2_O),2)
+AIC(gau2_O)
 
-gam1 <- glmmTMB(
-  SHIFT_abs ~ 
-    vel_abs_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  family = Gamma(link = "log"),
-  data = mydatatogo)
+```
 
-# Works!
+The interaction between velocity and GD is not significant in the Gaussian model
+
+```{r eval=FALSE, include=FALSE}
+# Partition the variance explained in this model to see how much of the variance is due to methods alone...
+
+
+# cond_partR <- mergeR2(
+#   partR2(gau1_O,
+#          partvars = "vel_abs_log",
+#          R2_type = "conditional",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partvars = "GD",
+#          R2_type = "conditional",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partvars = "vel_abs_log:GD",
+#          R2_type = "conditional",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partbatch = list(Methods = c("LogNtempUnits","LogExtent","ContinuousGrain","PrAb","Quality")),
+#          R2_type = "conditional",
+#          nboot = 100,
+#          parallel = TRUE))
+# 
+# marg_partR <- mergeR2(
+#   partR2(gau1_O,
+#          partvars = "vel_abs_log",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partvars = "GD",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partvars = "vel_abs_log:GD",
+#          nboot = 100,
+#          parallel = TRUE),
+#   partR2(gau1_O,
+#          partbatch = list(Methods = c("LogNtempUnits","LogExtent","ContinuousGrain","PrAb","Quality")),
+#          nboot = 100,
+#          parallel = TRUE))
+# 
+# # Part R2 unique to each predictor and combinations of (fixed effect) predictors
+# (forestplot(marg_partR) + forestplot(cond_partR)) + plot_annotation(tag_levels = "A", tag_prefix= "(", tag_suffix = ")")
+# 
+# # Inclusive R2 defined as the variance explained by a predictor irrespective of covariances with other predictors
+# (forestplot(marg_partR, type = "IR2") + forestplot(cond_partR, type = "IR2")) + plot_annotation(tag_levels = "A", tag_prefix= "(", tag_suffix = ")")
+# 
+# # Structure coefficients (SC), the contribution of a predictor to model prediction irrespective of other predictors (see Yeatts et al., 2017)
+# (forestplot(marg_partR, type = "SC") + forestplot(cond_partR, type = "SC")) + plot_annotation(tag_levels = "A", tag_prefix= "(", tag_suffix = ")")
+
+# Methods explain most of the variability in range shifts. However, the effect of ecology (velocity and GD) is still significant...
+
+```
+
+Check if a Gamma model is better than the Gaussian model:
+
+### Gamma model
+
+```{r}
+
+# Model with zero GD
+gam1_O <- glmer(SHIFT_abs ~ vel_abs * GD +
+                  LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                  (1 | Class),
+                family = Gamma(link = "log"),
+                data = mydatatogo %>%
+                  filter(Param=="O"))
+# model fails to converge
+# find_optimizer <- allFit(gam1_O, parallel = "multicore", ncpus = 5)
+# find_optimizer$bobyqa@optinfo # find information on optimizer
+# a model with bobyqa optimizer converges
+gam1_O <- update(gam1_O,
+                 control = glmerControl(optimizer = "bobyqa"))
+summary(gam1_O)
+round(MuMIn::r.squaredGLMM(gam1_O),2)
+AIC(gam1_O)
+
+# Model without zero GD
+gam2_O <- glmer(SHIFT_abs ~ vel_abs * GD + 
+                  LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                  (1 | Class), 
+                family = Gamma(link = "log"),
+                data = mydatatogo %>%
+                  filter(Param=="O") %>% 
+                  filter_all(all_vars(!is.infinite(.))))
+summary(gam2_O)
+round(MuMIn::r.squaredGLMM(gam2_O),2)
+AIC(gam2_O)
+
+```
+
+Both models show significant effects for the interaction term, with smaller effect strength in the model that exclude zero GD. Gamma models fit the data better relative to Gaussian models (based AIC and R2 values).
+
+### Interpretation of results in light of genetic diversity
+
+```{r message=FALSE, warning=FALSE, fig.width=7, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD"), gam1_O)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE)
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD"), gam2_O)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE)
+
+```
+
+As climate velocity increases, low GD species have to move as faster than high GD species to keep up with climate change. This corroborates the hypotheses that GD increases species' ability to stay in place. The fact that low GD species show a positive relationship with climate velocity indicates that climate exposure poses higher pressure on them relative to high GD species. As a consequence, low GD species have to move to track changing climates and stay under their thermal niches, otherwise they would go extinct. As GD increases, the effect of climate exposure on species range shift is relaxed -- species track climate change less closely.
+
+### Interpretation of results in light of climate velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=7, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs"), gam1_O)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE)
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs"), gam2_O)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE)
+
+```
+
+GD increases species' ability to stay in place under increasing climate exposure. However, when exposure is relaxed (slow climate velocity), GD facilitates species movement, presumably through higher adaptive potential that allow to explore of new habitats and niche axes.
+
+Next we test if these mechanisms hold across TE and LE.
+
+## Leading edge model
+
+```{r}
+
+# Model with zero GD
+gam1_LE <- glmer(SHIFT_abs ~ vel_abs * GD +
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   (1 | Class),
+                 family = Gamma(link = "log"),
+                 data = mydatatogo %>%
+                   filter(Param=="LE"))
+summary(gam1_LE)
+round(MuMIn::r.squaredGLMM(gam1_LE),2)
+AIC(gam1_LE)
+
+# Model without zero GD
+gam2_LE <- glmer(SHIFT_abs ~ vel_abs * GD + 
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   # (1|Article_ID) +
+                   (1 | Class), 
+                 family = Gamma(link = "log"),
+                 data = mydatatogo %>%
+                   filter(Param=="LE") %>% 
+                   filter_all(all_vars(!is.infinite(.))))
+summary(gam2_LE)
+round(MuMIn::r.squaredGLMM(gam2_LE),2)
+AIC(gam2_LE)
+
+
+```
+
+The interaction term is significant at the leading edge. However, the significance is marginal when excluding zero GD. Note that the marginal R2 of these models are much smaller than the centroid models.
+
+### Interpretation of results in light of genetic diversity
+
+```{r message=FALSE, warning=FALSE, fig.width=7, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD"), gam1_LE)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE)
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD"), gam2_LE)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE)
+
+```
+
+As climate velocity increases at the leading edge, low GD species move faster, whereas high GD species move slower. This seemingly contra-intuitive pattern may indicate that when the pressure from climate exposure is relaxed (i.e., climate stability or slow climate velocity), GD facilitates species movement, presumably though higher adaptive potential that may allow exploration of new habitats and niche axes. However, as climate exposure increases high GD helps species to stay in place.
+
+### Interpretation of results in light of climate velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=7, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs"), gam1_LE)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE)
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs"), gam2_LE)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE)
+
+```
+
+GD increases species' ability to stay in place under increasing climate exposure. However, when exposure is relaxed, GD facilitates species movement, presumably though higher adaptive potential that may allow exploration of new habitats and niche axes.
+
+## Trailing edge model
+
+```{r}
+
+# Model with zero GD
+gam1_TE <- glmer(SHIFT_abs ~ vel_abs * GD +
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   (1 | Class),
+                 family = Gamma(link = "log"),
+                 data = mydatatogo %>%
+                   filter(Param=="TE"))
+summary(gam1_TE)
+round(MuMIn::r.squaredGLMM(gam1_TE),2)
+AIC(gam1_TE)
+
+# Model without zero GD
+gam2_TE <- glmer(SHIFT_abs ~ vel_abs * GD + 
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   (1 | Class), 
+                 family = Gamma(link = "log"),
+                 data = mydatatogo %>%
+                   filter(Param=="TE") %>% 
+                   filter_all(all_vars(!is.infinite(.))))
+summary(gam2_TE)
+round(MuMIn::r.squaredGLMM(gam2_TE),2)
+AIC(gam2_TE)
+
+
+```
+
+The interaction term is not significant at the trailing edge.
+
+## All edges in single model
+
+*Cautionary note:* As the genetic data is at the species-level, we have no enough information about genetic diversity variability across multiple positions of a species range. Despite the issues that may arise from the inclusion of false duplicates (same genetic diversity information across multiple range positions of the same species), we fit a model including all three range positions with the aim to test if the mediating effect of GD on climate exposure is different across multiple range positions. However, given the issues described above, we advise caution when interpreting these results. This model is simplistic as it assumes no geographical variability in GD across a species range.
+
+```{r}
+
+# Model with zero GD
+gam1 <- glmer(SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+                LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                (1 | Class),
+              family = Gamma(link = "log"),
+              data = mydatatogo)
 summary(gam1)
+round(MuMIn::r.squaredGLMM(gam1),2)
+AIC(gam1)
 
-anova(gau1,gam1)
-
-```
-
-
-The Gaussian model have lower AIC. Use Gaussian model then!
-
-
-#### Interpretation of results
-Effect of GD is negative, meaning that species range shift less with high GD. Therefore, GD increases species' ability to stay in place.
-
-Interaction of GD:Lat is positive, suggesting that at higher latitudes a higher GD leads to faster shifts.
-
-Interaction of velocity and GD (vel_abs_log_scale:GD_sqrt_scale) is positive, indicating that as climate velocities increase species with higher GD move faster to track climate change. 
-
-The positive effect of the interaction GD:velocity seems contradictory with the effect of GD alone. However, I believe they complement rather then contradict each other. The isolated negative effect of GD on range shifts indicates that overall GD increases species ability to stay in place. However, under scenarios of increasing climate change velocities, a higher GD will elevate species ability to track climate change.
-
-
-```{r fig.height=5, fig.width=6}
-
-plot(effects::effect("vel_abs_log_scale:GD_sqrt_scale", gau1))
+# Model without zero GD
+gam2 <- glmer(SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+                LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                (1 | Class), 
+              family = Gamma(link = "log"),
+              data = mydatatogo %>% 
+                filter_all(all_vars(!is.infinite(.))))
+summary(gam2)
+round(MuMIn::r.squaredGLMM(gam2),2)
+AIC(gam2)
 
 ```
 
+In both models the interaction term of velocity:GD:Param is not significant. This suggests that the effect of GD and velocity are consistent across species range positions.
 
-### Trying alternative model structures
+### Interpretation of results in light of genetic diversity
+
+```{r message=FALSE, warning=FALSE, fig.width=15, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD","Param"), gam1)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+ef_gam$Param <- factor(ef_gam$Param,levels = c("TE","O","LE"))
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE) +
+  facet_wrap(.~Param, scales = "free")
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("vel_abs","GD","Param"), gam2)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$GD <- as.factor(ef_gam$GD)
+ef_gam$Param <- factor(ef_gam$Param,levels = c("TE","O","LE"))
+
+ggplot(ef_gam, aes(vel_abs, fit, colour=GD, fill=GD))+
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Climate velocity (abs)\nkm/year", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Nucleotide diversity") +
+  guides(fill = FALSE) +
+  facet_wrap(.~Param, scales = "free")
+
+```
+
+Across all range edges, low GD species move faster as climate velocity increases, whereas high GD species move slower.
+
+### Interpretation of results in light of climate velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=15, fig.height=5}
+
+# With zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs","Param"), gam1)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+ef_gam$Param <- factor(ef_gam$Param,levels = c("TE","O","LE"))
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE) +
+  facet_wrap(.~Param, scales = "free")
+
+# Excluding zero GD
+ef_gam <- effects::Effect(c("GD","vel_abs","Param"), gam2)
+ef_gam <- as.data.frame(ef_gam)
+ef_gam$vel_abs <- as.factor(ef_gam$vel_abs)
+ef_gam$Param <- factor(ef_gam$Param,levels = c("TE","O","LE"))
+
+ggplot(ef_gam, aes(GD, fit, colour=vel_abs, fill=vel_abs)) +
+  geom_line(size=1)+
+  geom_ribbon(colour=NA,alpha=0.1,
+              aes(ymin=lower,ymax=upper))+
+  scale_color_viridis_d(option = "C")+
+  scale_fill_viridis_d(option = "C")+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "Predicted range shift (abs)\nkm/year",
+       color = "Climate velocity (abs)\nkm/year") +
+  guides(fill = FALSE) +
+  facet_wrap(.~Param, scales = "free")
+
+```
+
+Across all positions of a species range, GD increases species' ability to stay in place under increasing climate exposure. However, when exposure is relaxed, GD facilitates species movement, presumably though higher adaptive potential that may allow exploration of new habitats and niche axes.
+
+# Sensitive analyses
+
+Here we perform supplementary analyses to explore the robustness of our results to possible bias that may exist in our data and analyses.
+
+## Outliers
+
+Outliers can have a lot of influence on the results when considering interactions so it would be useful to get a sense of the uncertainty. We adopt a multivariate outliers detection approach based on Mahalanobis Distance (MD). MD calculates the distance of each observation from the central mean. Larger values indicate that a observation is farther from where most of the points cluster. We calculate the MDs using the mahalanobis function from the `psych` package and identify those that fall above the cut-off score for a chi-square with k degrees of freedom (3 for 3 variables):
+
 ```{r}
 
-# try with separate Article_ID and Param
-gau2 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Article_ID) + # Methods II
-    (1|Param) + # Methods II
-    (1|Class/Family), # Taxonomy
-  data = mydatatogo)
+data_outlier <- mydatatogo[,c("SHIFT_abs","vel_abs","GD")]
 
-summary(gau2)
+md <- mahalanobis(data_outlier, 
+                  center = colMeans(data_outlier), 
+                  cov = cov(data_outlier))
+alpha <- .001
+cutoff <- (qchisq(p = 1 - alpha, df = 3))
+names_outliers_MH <- which(md > cutoff)
+excluded_mh <- names_outliers_MH
 
-AIC(gau1, gau2)
+mydatatogo_sub <- mydatatogo[-excluded_mh, ]
 
-#      df      AIC
-# gau1 15 12578.25
-# gau2 15 12620.09
+{
+  par(mfrow=c(1,2))
+  hist(mydatatogo$SHIFT_abs, main="With outliers", xlab = "Range shift")
+  hist(mydatatogo_sub$SHIFT_abs, main="Without outliers", xlab = "Range shift")
+}
+{
+  par(mfrow=c(1,2))
+  hist(mydatatogo$GD, main="With outliers", xlab = "Genetic diversity")
+  hist(mydatatogo_sub$GD, main="Without outliers", xlab = "Genetic diversity")
+}
+{
+  par(mfrow=c(1,2))
+  hist(mydatatogo$vel_abs, main="With outliers", xlab = "Climate velocity")
+  hist(mydatatogo_sub$vel_abs, main="Without outliers", xlab = "Climate velocity")
+}
 
-# gau1 is better
 
 ```
 
+### Rerun analysis - Centroid model
 
 ```{r}
 
-# try random slope 
-gau3 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : GD_sqrt_scale|Class/Family), # Taxonomy
-  data = mydatatogo)
-# Warning: Model convergence problem; singular convergence (7). See vignette('troubleshooting'), help('diagnose')
-diagnose(gau3)
-# random slope on vel_abs_log_scale:GD_sqrt_scale|Class is not helping
-summary(gau3) 
+# Model with zero GD
+gam1_O <- glmer(SHIFT_abs ~ vel_abs * GD +
+                  LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                  (1 | Class),
+                family = Gamma(link = "log"),
+                data = mydatatogo_sub %>%
+                  filter(Param=="O"))
+summary(gam1_O)
+round(MuMIn::r.squaredGLMM(gam1_O),2)
+AIC(gam1_O)
 
-gau3 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : GD_sqrt_scale|Group) + # Taxonomy
-    (1|Class/Family),
-  data = mydatatogo)
-# Warning: Model convergence problem; non-positive-definite Hessian matrix. See vignette('troubleshooting')
-diagnose(gau3)
-
-summary(gau3) # random slope on vel_abs_log_scale:GD_sqrt_scale|Group is not helping
-
-
-gau3 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : GD_sqrt_scale|Group) + # Taxonomy
-    (1|Order/Family),
-  data = mydatatogo)
-# Warning: Model convergence problem; non-positive-definite Hessian matrix. See vignette('troubleshooting')
-
-summary(gau3) # random slope on vel_abs_log_scale:GD_sqrt_scale|Group is not helping
-
-gau3 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : GD_sqrt_scale|Class), # Taxonomy
-  data = mydatatogo)
-# Doesn't converges but fits...
-# random slope on vel_abs_log_scale:GD_sqrt_scale|Class is not helping
-# the interaction of vel_abs_log_scale:GD_sqrt_scale becomes is significant!
-summary(gau3) 
-
-AIC(gau1,gau3)
-# gau1 is better
+# We do not have to fit a model without zero GD because they are removed as outliers
 
 ```
 
+Results are consistent when removing outliers!
 
-We have 2 candidate models:
-*The simple:* (gau1)
-SHIFT_abs_log ~ vel_abs_log_scale * GD_sqrt_scale + GD_sqrt_scale:Lat +  
-LogExtent + ContinuousGrain + Quality + PrAb + (1 | Param:Article_ID) +  
-(1 | Order/Family)
-
-*The random slope:* (gau3)
-SHIFT_abs_log ~ vel_abs_log_scale * GD_sqrt_scale + GD_sqrt_scale:Lat +  
-LogExtent + ContinuousGrain + Quality + PrAb + (1 | Param:Article_ID) +  
-(vel_abs_log_scale:GD_sqrt_scale | Class)
-
-
+### Rerun analysis - Leading edge model
 
 ```{r}
-summary(gau1)
-summary(gau3)
-```
 
+# Model with zero GD
+gam1_LE <- glmer(SHIFT_abs ~ vel_abs * GD +
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   (1 | Class),
+                 family = Gamma(link = "log"),
+                 data = mydatatogo_sub %>%
+                   filter(Param=="LE"))
+summary(gam1_LE)
+round(MuMIn::r.squaredGLMM(gam1_LE),2)
+AIC(gam1_LE)
 
-```{r fig.height=5, fig.width=6}
-
-plot(effects::effect("vel_abs_log_scale:GD_sqrt_scale", gau1), main = "Model 1")
-plot(effects::effect("vel_abs_log_scale:GD_sqrt_scale", gau3), main = "Model 3")
-
-```
-
-
-## GLM: Tajima's vs velocity
-
-We went further and use a different metric to investigate the potential modulating effect of genetic processes on range shifts. 
-Tajima's D is widely used to detect departure from neutrality that potentially result from population size change over time  (Tajima, 1989). Tajima’s D is composed of two other metrics: the mean pairwise difference (π) and the number (S) of segregating sites, both representing an estimator of θ (theta). While the first metric measures the observed genetic variation in the sequences, the second metric quantifies the expected amount of genetic variation under the null model. Thus, under a scenario of constant population size, the observed amount of genetic variation (π) should be approximately equal to the expected genetic variation (S). For example, population expansions increase the number of rare variants (i.e., a polymorphic site present in only one—singletons—or in very few individuals) in the population, which leads to an increase in the expected value of theta. Conversely, rare polymorphisms lead to a lower value of π. The distortion between π and S, which represents a departure from mutation-drift equilibrium, is captured by Tajima’s D. Negative values are interpreted as an evidence of population expansion and positive values as population bottleneck. Note that while some authors have argued that significant results could result from positive or balancing selection, respectively, the demographic causes are the most common interpretation in phylogeographic studies and likely to be the most relevant for a global comparison (Fonseca et al. 2023). 
-
-Here, we keep the same model structure as before, but include Tajima's D as an interaction term with climate velocity.
-
-```{r height=10, fig.width=10}
-
-gau11 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * TajimasD +# Ecology
-    TajimasD:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  data = mydatatogo)
-
-summary(gau11)
-
-gau13 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * TajimasD + # Ecology
-    TajimasD:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : TajimasD|Class), # Taxonomy
-  data = mydatatogo)
-# convergence issue
-summary(gau13) 
-
-gau13 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * TajimasD + # Ecology
-    TajimasD:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : TajimasD|Group), # Taxonomy
-  data = mydatatogo)
-# Works
-# but not significant vel_abs_log_scale:TajimasD
-summary(gau13) 
-
-gau13 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * TajimasD + # Ecology
-    TajimasD:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (vel_abs_log_scale : TajimasD|Class:Family), # Taxonomy
-  data = mydatatogo)
-# Works
-summary(gau13) 
-# Group:Family vel_abs_log_scale:TajimasD explains very little
-
-
-AIC(gau11,gau13)
-# gau11 is better
+# We do not have to fit a model without zero GD because they are removed as outliers
 
 ```
 
-### Interpretation of results 
-Range shifts are positively associated with climate velocity, suggesting shift magnitudes increase with climate exposure. Range shifts are negatively correlated with Tajima's D, suggesting species that show signature of population contraction shift less. Moreover, the interaction term indicates range shifts are positively associated with climate velocity when Tajima's D is positive (evidence of population contraction). This indicates that under populations contraction, species tend to track climate change more closely (otherwise they go extinct). In contrast, when populations expand species are more likely to remain in place and don't move to track climate change. 
+At the leading edge, removing outliers make the interaction term and also the effects of velocity and GD insignificant.
 
+### Rerun analysis - Trailing edge model
 
-## GAMM: GD vs velocity
+```{r}
 
-```{r }
-# first we contrast models with a thin plate regression spline (default smoother in GAM) with models with a tensor smooth product
+# Model with zero GD
+gam1_TE <- glmer(SHIFT_abs ~ vel_abs * GD +
+                   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                   (1 | Class),
+                 family = Gamma(link = "log"),
+                 data = mydatatogo_sub %>%
+                   filter(Param=="TE"))
+summary(gam1_TE)
+round(MuMIn::r.squaredGLMM(gam1_TE),2)
+AIC(gam1_TE)
 
-# GD_gamm1 <- gamm(
-#   SHIFT_abs_log ~
-#     GD_sqrt_scale + vel_abs_log_scale + GD_sqrt_scale:Lat +
-#     s(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables
-#     LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-#   random = list(
-#     Param=~1, # random effect of Param
-#     Article_ID=~1, # random effect of Study
-#     Class=~1), # random effect of Class
-#   data = mydatatogo)
-# singularity issues
-
-GD_gamm1 <- gamm(
-  SHIFT_abs_log ~ 
-    s(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1, # random effect of Study
-    Class=~1), # random effect of Class
-  data = mydatatogo)
-
-summary(GD_gamm1$gam)
-
-GD_gamm2 <- gamm(
-  SHIFT_abs_log ~ 
-    ti(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1, # random effect of Study
-    Class=~1), # random effect of Class
-  data = mydatatogo)
-
-summary(GD_gamm2$gam)
-
-anova(GD_gamm1$lme, GD_gamm2$lme)
+# We do not have to fit a model without zero GD because they are removed as outliers
 
 ```
 
-Models 1 and 2 are identical based on AIC. I will keep the tensor smoother from model2 as it leads to higher r-squared and <P-values for the interaction term...
+Results also no longer significant at the trailing edge (just as when outliers are included).
 
-In addition, I check if including the GD and velocity in the model helps...
-```{r }
+### Rerun analysis - Fitting all edges in single model
 
-GD_gamm3 <- gamm(
-  SHIFT_abs_log ~ 
-    GD_sqrt_scale + vel_abs_log_scale + GD_sqrt_scale:Lat +
-    ti(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1, # random effect of Study
-    Class=~1), # random effect of Class
-  data = mydatatogo)
+```{r}
 
-summary(GD_gamm3$gam)
+# Model with zero GD
+gam1 <- glmer(SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+                LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                (1 | Class),
+              family = Gamma(link = "log"),
+              data = mydatatogo_sub)
+summary(gam1)
+round(MuMIn::r.squaredGLMM(gam1),2)
+AIC(gam1)
 
-anova(GD_gamm2$lme, GD_gamm3$lme)
-
+# We do not have to fit a model without zero GD because they are removed as outliers
 
 ```
 
-There is no difference between model 2 and 3. I will keep model 3 as it leads to higher r-squared and <P-values for the interaction term...
+The interaction term of velocity:GD is no longer significant. Yet, the interaction term of velocity:GD:Param is also not significant.
 
-```{r fig.height=5, fig.width=5}
+## False duplicates
 
-dataplot <- vis.gam.data(GD_gamm3$gam, 
-                         view = c("GD_sqrt_scale","vel_abs_log_scale"), 
-                         n.grid = 10, 
-                         theta = 45)
-GD <- dataplot[[2]]
-Velocity <- dataplot[[1]]
-Response = dataplot[[3]]
+In order to accounting for the issues that may arise from false duplicate samples for GD (see section Modelling Framework above), we reran analyses by subsetting our complete datasets to include only one range edge shift per species. Doing so, we applied prioritization levels for each range edge. For example, for the model in which the centroid was prioritized, species with range shifts estimated at other range positions (e.g., centroid + leading edge) were excluded. For the remaining species with shifts outside of the centroid, we apply a second level of prioritization, finally keeping one range shift observation per species and per edge. This approach was repeated for all three range edges and prioritization levels resulting in six datasets:
 
-plot_ly(x = ~Velocity, y = ~GD, z = ~Response, type = "surface") %>% 
-  layout(scene = list(
-    aspectmode='cube',
-    yaxis = list(autorange = "reversed")))
+```{r echo=FALSE}
+
+priority_data <- data.frame(Dataset = 1:6,
+                            First = c("O","O", "LE", "LE", "TE", "TE"), 
+                            Second = c("LE","TE","O","TE","O","LE"), 
+                            Third = c("TE","LE","TE","O","LE","O"))
+
+priority_data
 
 ```
 
-Test if including a random slope helps...
+```{r}
 
-```{r height=5, fig.width=5}
+# get edges per species
+edge_data <- mydatatogo %>%
+  group_by(spp, Param) %>%
+  tally %>%
+  mutate(n = 1) %>%
+  pivot_wider(names_from = Param, values_from = n) 
 
-GD_gamm4 <- gamm(
-  SHIFT_abs_log ~ 
-    GD_sqrt_scale + vel_abs_log_scale + GD_sqrt_scale:Lat +
-    ti(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1, # random effect of Study
-    Class=~GD_sqrt_scale), # random slope of GD on Class
-  data = mydatatogo)
+edge_data[,2:4] <- ifelse(is.na(edge_data[,2:4]), 0, 1) 
+edge_data <- edge_data %>%
+  rowwise() %>% 
+  mutate(N_edges = sum(c(O, LE, TE)))
 
-summary(GD_gamm4$gam)
-
-anova(GD_gamm3$lme, GD_gamm4$lme)
-
-```
-
-No!
-
-
-## GAMM: Tajima's vs velocity
-
-```{r height=5, fig.width=5}
-
-# Taj_gamm1 <- gamm(
-#   SHIFT_abs_log ~ 
-#     TajimasD + vel_abs_log_scale + TajimasD:Lat +
-#     s(TajimasD, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-#     LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-#   random = list(
-#     Param=~1, # random effect of Param
-#     Article_ID=~1,
-#     Class=~1), # random effect of Study
-#   data = mydatatogo)
-# singularity issue
-
-Taj_gamm2 <- gamm(
-  SHIFT_abs_log ~ 
-    TajimasD + vel_abs_log_scale + TajimasD:Lat +
-    ti(TajimasD, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1,
-    Class=~1), # random effect of Study
-  data = mydatatogo)
-
-summary(Taj_gamm2$gam)
-
-```
-
-
-
-
-```{r height=10, fig.width=10}
-dataplot <- vis.gam.data(Taj_gamm2$gam, 
-                         view = c("TajimasD","vel_abs_log_scale"), 
-                         n.grid = 10, 
-                         theta = 45)
-TajimasD <- dataplot[[2]]
-Velocity <- dataplot[[1]]
-Response = dataplot[[3]]
-
-plot_ly(x = ~Velocity, y = ~TajimasD, z = ~Response, type = "surface") %>% 
-  layout(scene = list(
-    aspectmode='cube',
-    yaxis = list(autorange = "reversed")))
-
-```
-
-# Elevation models
-
-```{r message=FALSE}
-
-mydatatogo <- mydataset  %>%
-  dplyr::filter(Type == "ELE") %>%
-  mutate(
-    vel_raw = velocity,
-    vel = scale(vel_raw),
-    vel_abs = abs(vel_raw),
-    vel_abs_scale = scale(vel_abs),
-    vel_abs_log = log(vel_abs),
-    vel_abs_log_scale = scale(vel_abs_log),
-    vel_abs_sqrt = sqrt(vel_abs),
-    vel_abs_sqrt_scale = scale(vel_abs_sqrt),
-    
-    SHIFT_raw = SHIFT,
-    SHIFT = scale(SHIFT_raw),
-    SHIFT_abs = abs(SHIFT_raw),
-    SHIFT_abs_log = log(SHIFT_abs),
-    SHIFT_abs_log_scale = scale(SHIFT_abs_log),
-    
-    SHIFT_cor_raw = SHIFT_cor,
-    SHIFT_cor = scale(SHIFT_cor_raw),
-    SHIFT_cor_abs = abs(SHIFT_cor_raw),
-    SHIFT_cor_abs_log = log(SHIFT_cor_abs),
-    SHIFT_cor_abs_log_scale = scale(SHIFT_abs_log),
-    
-    ID.area = scale(ID.area),
-    DUR = scale(DUR),
-    LogExtent = log(Extent),
-    Lat = abs(Latitude),
-    
-    START = scale(START),
-    Param = factor(Param),
-    Group = factor(Group),
-    spp = factor(spp),
-    
-    GD = Nucleotide_diversity,
-    GD_sqrt = sqrt(GD),
-    GD_scale = scale(Nucleotide_diversity),
-    GD_sqrt_scale = scale(sqrt(GD))) %>%
+###############
+# create datasets
+edge_dataset <- list()
+for(i in 1:nrow(priority_data)){
   
-  dplyr::select(
-    GD, GD_sqrt, GD_scale, GD_sqrt_scale, Lat, TajimasD, overlap_SA, R2,
-    SHIFT, SHIFT_abs, SHIFT_abs_log, SHIFT_raw, SHIFT_abs_log_scale,
-    SHIFT_cor, SHIFT_cor_abs, SHIFT_cor_abs_log, SHIFT_cor_raw, SHIFT_abs_log_scale,
-    vel, vel_abs, vel_abs_scale, vel_abs_log, vel_raw, vel_abs_log_scale, vel_abs_sqrt, vel_abs_sqrt_scale,
-    # min_dist, dist_weight,
-    START, DUR, ID.area, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, AreaF,
-    Param, Group, spp, Class, Order, Family, Genus, 
-    ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Sampling, Article_ID,
-    # Marker,
-    shift_vel_sign)
-
-mydatatogo[,1:33] <- lapply(mydatatogo[,1:33], as.numeric)
-
-mydatatogo <- data.frame(na.omit(mydatatogo))
-
-# N dataset
-nrow(mydatatogo)
-nrow(mydatatogo %>% dplyr::filter(GD > 0))
-
-# N species
-length(unique(mydatatogo$spp))
-# 1725
-
-table(mydatatogo$Group)
-# Bird   Fish Insect  Plant 
-# 1273    228   1735    812 
-mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
-
-table(mydatatogo$Param)
-
-table(mydatatogo$ContinuousGrain)
-
-table(mydatatogo$Quality)
-
-table(mydatatogo$PrAb)
-
-table(mydatatogo$ExtentF)
-
-table(mydatatogo$Order)
+  # first level prioritization
+  keep_1 <- edge_data[which(edge_data[,priority_data$First[i]] == 1),]
+  pos <- !which(names(keep_1) == priority_data$First[i]) == 2:4
+  keep_1[,which(pos)+1] <- 0
+  # second level prioritization
+  keep_2 <- edge_data[which(edge_data[,priority_data$First[i]] == 0),] # remove 1st level
+  keep_2 <- keep_2[which(keep_2$N_edges>1),] # select those with >1 edge
+  keep_2 <- keep_2[which(keep_2[,priority_data$Second[i]] == 1),] # choose priority
+  pos <- !which(names(keep_2) == priority_data$Second[i]) == 2:4
+  keep_2[,which(pos)+1] <- 0
+  # third level (keep if they do not overlap)
+  keep_3 <- edge_data %>% filter(!spp %in% c(keep_1$spp,keep_2$spp))
+  
+  # Final
+  edge_dataset[[i]] <- unique(rbind(keep_1, keep_2, keep_3))
+  
+}
 
 ```
 
-## GLM: GD vs velocity
-### Gaussian vs Gamma model
+### Rerun analysis - All edges model
+
 ```{r}
 
-gau1 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  data = mydatatogo)
+gam_sub <- pblapply(edge_dataset, function(x){
+  
+  edge_dataset_2go <- x
+  
+  LE_spp <- edge_dataset_2go$spp[which(edge_dataset_2go$LE==1)]
+  O_spp <- edge_dataset_2go$spp[which(edge_dataset_2go$O==1)]
+  TE_spp <- edge_dataset_2go$spp[which(edge_dataset_2go$TE==1)]
+  
+  # Fix param levels
+  mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
+  
+  tmp <- glmer(SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+                 LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+                 (1 | Class),
+               family = Gamma(link = "log"),
+               data = mydatatogo %>%
+                 filter((spp %in% LE_spp & Param == "LE") |
+                          (spp %in% O_spp & Param == "O") |
+                          (spp %in% TE_spp & Param == "TE")))
+  
+  tmp <- summary(tmp)
+  tmp$coefficients
+  
+})
 
-# Works!
-summary(gau1)
-
-gam1 <- glmmTMB(
-  SHIFT_abs ~ 
-    vel_abs_scale * GD_sqrt_scale + # Ecology
-    GD_sqrt_scale:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  family = Gamma(link = "log"),
-  data = mydatatogo)
-
-# Works!
-summary(gam1)
-
-anova(gau1,gam1)
-
-```
-
-No significant effects
-
-## GLM: Tajima's vs velocity
-```{r}
-
-gau11 <- glmmTMB(
-  SHIFT_abs_log ~ 
-    vel_abs_log_scale * TajimasD +# Ecology
-    TajimasD:Lat + # LGM effect on GD
-    LogExtent + ContinuousGrain + Quality + PrAb + # Methods
-    (1|Param/Article_ID) + # Methods II
-    (1|Class/Family), # Taxonomy
-  data = mydatatogo)
-
-summary(gau11)
-
+gam_sub
 
 ```
 
+In most models the interaction between GD and velocity is significant!
 
-No significant effects
-
-## GAMM: GD vs velocity
-
-```{r height=5, fig.width=5}
-
-GD_gamm3 <- gamm(
-  SHIFT_abs_log ~ 
-    GD_sqrt_scale + vel_abs_log_scale + GD_sqrt_scale:Lat +
-    ti(GD_sqrt_scale, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1, # random effect of Study
-    Class=~1), # random effect of Class
-  data = mydatatogo)
-
-summary(GD_gamm3$gam)
-
-
-```
-
-
-No significant effects
-
-
-## GAMM: Tajima's vs velocity
-
-```{r height=5, fig.width=5}
-
-Taj_gamm2 <- gamm(
-  SHIFT_abs_log ~ 
-    TajimasD + vel_abs_log_scale + TajimasD:Lat +
-    ti(TajimasD, vel_abs_log_scale) + # interaction between smoothed variables (using a tensor smoother)
-    LogExtent + ContinuousGrain + Quality + PrAb, # fixed effects of methods
-  random = list(
-    Param=~1, # random effect of Param
-    Article_ID=~1,
-    Class=~1), # random effect of Study
-  data = mydatatogo)
-
-summary(Taj_gamm2$gam) 
-
-```
-
-No significant effects
-
-
-
-
+------------------------------------------------------------------------
