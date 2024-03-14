@@ -265,9 +265,83 @@ table(mydatatogo$PrAb)
 
 table(mydatatogo$Order)
 
+c <- mydatatogo %>%
+  group_by(Class) %>%
+  summarise(`Range shifts` = length(Class),
+            `Species` = length(unique(spp)))
+
+DT::datatable(c,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c), `fontSize` = '80%')
+
+c <- mydatatogo %>%
+  group_by(Class) %>%
+  mutate(Class=factor(Class, levels = sort(unique(as.character(mydatatogo$Class))))) %>%
+  summarise(`Avg. Range shift velocity (SD)` = paste0(round(mean(SHIFT),2), " (", round(sd(SHIFT),2), ")"),
+            `Avg. Genetic diversity (SD)` = paste0(formatC(mean(GD), format = "e", digits=2), " (", formatC(sd(GD), format = "e", digits=1), ")"),
+            `Avg. Climate change velocity (SD)` = paste0(round(mean(vel_abs),2), " (", round(sd(vel_abs),3), ")"))
+
+DT::datatable(c,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c), `fontSize` = '80%')
+
 ```
 
 ## Histograms
+
+### Per Class
+```{r fig.height=3,fig.width=7}
+
+tmp <- mydatatogo %>%
+  mutate(vel_abs=log1p(vel_abs),
+         SHIFT_abs=log1p(SHIFT_abs)) %>%
+  select(Class,GD,vel_abs,SHIFT_abs) %>%
+  gather(variable, value, -Class)
+
+avg_gd <- tmp %>%
+  filter(variable=="GD") %>%
+  group_by(Class) %>%
+  dplyr::summarise(avg=median(value))
+
+ggplot(mydatatogo %>%
+         select(Class,GD,vel_abs,SHIFT_abs) %>%
+         gather(variable, value, -Class) %>%
+         mutate(Class=factor(Class,levels = avg_gd$Class[order(avg_gd$avg)])), 
+       aes(value))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = "")+
+  facet_wrap(.~variable, scales = "free", ncol = 3)
+
+p1 <- ggplot(mydatatogo, aes(SHIFT_abs))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = bquote('Absolute velocity of range shift '(km.yr^1)))
+
+p2 <- ggplot(mydatatogo, aes(GD))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = "Genetic diversity")
+
+p3 <- ggplot(mydatatogo, aes(vel_abs))+
+  # geom_histogram(binwidth = .5,aes(fill=Class),alpha=.5) +
+  geom_density(aes(fill=Class),alpha=.5) +
+  # scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)))
+
+```
 
 ### Shift
 
@@ -286,7 +360,7 @@ hist(mydatatogo$GD)
 hist(mydatatogo$GD_log1p)
 
 ### GD vs Class
-ggplot(mydatatogo, aes(GD_log))+
+ggplot(mydatatogo, aes(GD))+
   geom_density(aes(fill = Class), color = NA, alpha = .3)+
   theme_classic() +
   labs(y = "Density", x = "Nucleotide diversity (log)")
@@ -315,10 +389,12 @@ We should use SHIFT_abs with a Gamma family or SHIFT_abs_log in a gaussian famil
 
 ```{r message=FALSE, warning=FALSE}
 
+summary(mydatatogo$dist_cent/1000)
 hist(mydatatogo$dist_cent/1000, 
      main = "Distance from study area centroid", 
      xlab = "Distance in km")
 
+summary(mydatatogo$dist_edge/1000)
 hist(mydatatogo$dist_edge/1000, 
      main = "Distance from the range edge of study area", 
      xlab = "Distance in km")
@@ -347,8 +423,8 @@ ggplot(mydatatogo,
   geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
   theme_classic()+ 
   theme(aspect.ratio=1)+
-  labs(x = "Climate velocity (abs)\nkm/year", 
-       y = "Range shift (abs)\nkm/year") +
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red")
 
 ```
@@ -371,8 +447,8 @@ ggplot(mydatatogo,
   geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
   theme_classic()+ 
   theme(aspect.ratio=1)+
-  labs(x = "Climate velocity (abs)\nkm/year", 
-       y = "Range shift (abs)\nkm/year") +
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
 
@@ -397,8 +473,8 @@ ggplot(mydatatogo,
         legend.position="top",
         aspect.ratio=1)+
   labs(x = "Nucleotide diversity", 
-       y = "Range shift (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red")
 
 ```
@@ -420,8 +496,8 @@ ggplot(mydatatogo,
         legend.position="top",
         aspect.ratio=1)+
   labs(x = "Nucleotide diversity", 
-       y = "Range shift (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
 
@@ -443,8 +519,8 @@ ggplot(mydatatogo,
         legend.position="top",
         aspect.ratio=1)+
   labs(x = "Nucleotide diversity", 
-       y = "Range shift (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(Class~., scales = "free")
 
@@ -465,7 +541,7 @@ ggplot(mydatatogo,
                            length.out = 5),3)))+
   theme_classic()+
   theme(aspect.ratio=1)+
-  labs(x = "Climate change velocity (abs)\nkm/year", 
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
        y = "Nucleotide diversity") +
   geom_smooth(method = "lm", color = "red")
 
@@ -483,7 +559,7 @@ ggplot(mydatatogo,
                            length.out = 5),3)))+
   theme_classic()+
   theme(aspect.ratio=1)+
-  labs(x = "Climate change velocity (abs)\nkm/year", 
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
        y = "Nucleotide diversity") +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
@@ -509,7 +585,7 @@ ggplot(mydatatogo,
         aspect.ratio=1)+
   labs(x = "Tajima's D", 
        y = "Range shift velocity (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red")
 
 ```
@@ -529,7 +605,7 @@ ggplot(mydatatogo,
         aspect.ratio=1)+
   labs(x = "Tajima's D", 
        y = "Range shift velocity (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
 ```
@@ -550,7 +626,7 @@ ggplot(mydatatogo,
         aspect.ratio=1)+
   labs(x = "Tajima's D", 
        y = "Range shift velocity (abs)\nkm/year", 
-       color = "Climate change velocity (abs)\nkm/year") +
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(Class~., scales = "free")
 
@@ -571,7 +647,7 @@ ggplot(mydatatogo,
   geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
   theme_classic()+
   theme(aspect.ratio=1)+
-  labs(x = "Climate change velocity (abs)\nkm/year", 
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
        y = "Tajima's D") +
   geom_smooth(method = "lm", color = "red")
 
@@ -589,7 +665,7 @@ ggplot(mydatatogo,
   geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
   theme_classic()+
   theme(aspect.ratio=1)+
-  labs(x = "Climate change velocity (abs)\nkm/year", 
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
        y = "Tajima's D") +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
@@ -601,16 +677,163 @@ ggplot(mydatatogo,
 
 options(knitr.graphics.error = FALSE)
 
-# pdf_file <- here::here("Figs/Map2.pdf")
-png_file <- here::here("Figs/Map2.png")
-# 
+# pdf_file <- here::here("Figs/Map_sp-level_GD2.pdf")
 # pdf_page <- pdf_render_page(pdf_file, page = 1)
-# 
+png_file <- here::here("Figs/Map_sp-level_GD2.png")
 # png::writePNG(pdf_page, png_file, dpi = 300)
 
 knitr::include_graphics(normalizePath(png_file))
 
 ```
+
+## N obs for modeling
+```{r echo=FALSE, fig.height=7, fig.width=8, message=FALSE, warning=FALSE}
+p1 <- ggplot(mydatatogo, aes(x=vel_abs, y=SHIFT))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,1),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                           max(mydatatogo$vel_abs_log),
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                           max(mydatatogo$SHIFT_abs_log),
+                           length.out = 6),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "", 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)))
+
+p2 <- ggplot(mydatatogo, aes(x=GD, y=SHIFT))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_x_continuous(n.breaks = 5,
+                     limits=c(0,0.055), expand=c(0,0))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                           max(mydatatogo$SHIFT_abs_log),
+                           length.out = 6),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "Nucleotide diversity", 
+       y = "") 
+
+p3 <- ggplot(mydatatogo, aes(x=vel_abs, y=GD))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_y_continuous(n.breaks = 5,
+                     limits=c(0,0.055), expand=c(0,0))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,1),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                           max(mydatatogo$vel_abs_log),
+                           length.out = 5),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = "Nucleotide diversity")
+
+
+(p1+p2+p3) + plot_layout(ncol=2, axis_titles = "collect")
+
+```
+
+
+```{r echo=FALSE, fig.height=7, fig.width=8, message=FALSE, warning=FALSE}
+
+range_position <- c("TE","O","LE")
+range_position_name <- c("Trailing edge", "Centroid", "Leading edge")
+
+range_position_max_TE <- c(25,50,50)
+range_position_max_O <- c(255,420,209)
+range_position_max_LE <- c(299,499,389)
+range_position_max <- rbind(range_position_max_TE,
+                            range_position_max_O,
+                            range_position_max_LE)
+
+comb_plot <- list()
+
+for(i in 1:length(range_position)){
+  
+  p1 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=vel_abs, y=SHIFT))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_x_continuous(
+      trans="log",
+      labels=function(x) round(x,1),
+      breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                             max(mydatatogo$vel_abs_log),
+                             length.out = 5),3)))+
+    scale_y_continuous(
+      trans="log",
+      labels=function(x) round(x,3),
+      breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                             max(mydatatogo$SHIFT_abs_log),
+                             length.out = 6),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = "", 
+         y = bquote('Absolute velocity of range shift '(km.yr^1))) 
+  
+  p2 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=GD, y=SHIFT))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_x_continuous(n.breaks = 5,
+                       limits=c(0,0.055), expand=c(0,0))+
+    scale_y_continuous(
+      trans="log",
+      labels=function(x) round(x,3),
+      breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                             max(mydatatogo$SHIFT_abs_log),
+                             length.out = 6),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = "Nucleotide diversity", 
+         y = "") 
+  
+  p3 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=vel_abs, y=GD))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_y_continuous(n.breaks = 5,
+                       limits=c(0,0.055), expand=c(0,0))+
+    scale_x_continuous(
+      trans="log",
+      labels=function(x) round(x,1),
+      breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                             max(mydatatogo$vel_abs_log),
+                             length.out = 5),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+         y = "Nucleotide diversity")
+  
+  
+  print((p1+p2+p3) + 
+          plot_layout(ncol=2) +  
+          plot_annotation(title = range_position_name[i],
+                          theme = theme(plot.title = element_text(hjust = 0.5, vjust = 10))))
+  
+}
+
+```
+
+
 
 # Statistics
 
@@ -667,6 +890,7 @@ gau1_allW <- glmmTMB(gau_velxGD_edge1,
 summary(gau1_allW)
 round(MuMIn::r.squaredGLMM(gau1_allW),2)
 AIC(gau1_allW)
+performance::check_collinearity(gau1_allW)
 
 # Model without zero GD + fixed-effect methods
 gau2_allW <- glmmTMB(gau_velxGD_edge1, 
@@ -676,6 +900,7 @@ gau2_allW <- glmmTMB(gau_velxGD_edge1,
 summary(gau2_allW)
 round(MuMIn::r.squaredGLMM(gau2_allW),2)
 AIC(gau2_allW)
+performance::check_collinearity(gau2_allW)
 
 ```
 
@@ -687,6 +912,7 @@ gau3_allW <- glmmTMB(gau_velxGD_edge2,
 summary(gau3_allW)
 round(MuMIn::r.squaredGLMM(gau3_allW),2)
 AIC(gau3_allW)
+performance::check_collinearity(gau3_allW)
 
 # Model without zero GD + random-effect methods
 gau4_allW <- glmmTMB(gau_velxGD_edge2, 
@@ -696,6 +922,7 @@ gau4_allW <- glmmTMB(gau_velxGD_edge2,
 summary(gau4_allW)
 round(MuMIn::r.squaredGLMM(gau4_allW),2)
 AIC(gau4_allW)
+performance::check_collinearity(gau4_allW)
 
 ```
 
@@ -741,6 +968,7 @@ gam1_allW <- glmmTMB(gam_velxGD_edge1,
 summary(gam1_allW)
 round(MuMIn::r.squaredGLMM(gam1_allW),2)
 AIC(gam1_allW)
+performance::check_collinearity(gam1_allW)
 
 # Model without zero GD + fixed-effect methods
 gam2_allW <- glmmTMB(gam_velxGD_edge1, 
@@ -751,6 +979,8 @@ gam2_allW <- glmmTMB(gam_velxGD_edge1,
 summary(gam2_allW)
 round(MuMIn::r.squaredGLMM(gam2_allW),2)
 AIC(gam2_allW)
+performance::check_collinearity(gam2_allW)
+
 ```
 
 
@@ -763,6 +993,7 @@ gam3_allW <- glmmTMB(gam_velxGD_edge2,
 summary(gam3_allW)
 round(MuMIn::r.squaredGLMM(gam3_allW),2)
 AIC(gam3_allW)
+performance::check_collinearity(gam3_allW)
 
 # Model without zero GD + random-effect methods
 gam4_allW <- glmmTMB(gam_velxGD_edge2, 
@@ -773,6 +1004,7 @@ gam4_allW <- glmmTMB(gam_velxGD_edge2,
 summary(gam4_allW)
 round(MuMIn::r.squaredGLMM(gam4_allW),2)
 AIC(gam4_allW)
+performance::check_collinearity(gam4_allW)
 
 ```
 
@@ -1014,7 +1246,7 @@ my.cluster2 <- parallel::makeCluster(
   type = "PSOCK"
 )
 
-clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_formulaLE","ranef"))
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
 
 #register cluster
 doParallel::registerDoParallel(cl = my.cluster2)
@@ -1088,7 +1320,7 @@ my.cluster2 <- parallel::makeCluster(
   type = "PSOCK"
 )
 
-clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_formulaTE","ranef"))
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
 
 #register cluster
 doParallel::registerDoParallel(cl = my.cluster2)
@@ -1162,7 +1394,7 @@ my.cluster2 <- parallel::makeCluster(
   type = "PSOCK"
 )
 
-clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_formulaCE","ranef"))
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
 
 #register cluster
 doParallel::registerDoParallel(cl = my.cluster2)
@@ -1577,6 +1809,7 @@ if(!file.exists(res)){
 #### allW2 model
 
 ```{r eval=FALSE}
+
 resTE <- here::here("Output","summary_GDeff_allW2_TE.csv")
 resCE <- here::here("Output","summary_GDeff_allW2_CE.csv")
 resLE <- here::here("Output","summary_GDeff_allW2_LE.csv")
@@ -2012,10 +2245,39 @@ if(!all(file.exists(resTE,resCE,resLE))){
 ```
 
 
-# Tables
+# Tables goodness-of-fit
+
+```{r}
+
+c1=read.csv2(here::here("Output","summary_R2.csv"),
+             sep=";",dec=".",h=T)
+c1_m <- c1 %>%
+  select(moy, type, model) %>%
+  spread(type,moy)
+
+c1_sd <- c1 %>%
+  select(sd, type, model) %>%
+  spread(type,sd)
+
+c1_m$r2m <- paste0(round(c1_m$r2m,2), " (", round(c1_sd$r2m,2), ")")
+c1_m$r2c <- paste0(round(c1_m$r2c,2), " (", round(c1_sd$r2c,2), ")")
+
+DT::datatable(c1_m,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c1_m), `fontSize` = '80%')
+
+```
+
+# Tables coefficients
+
 ```{r}
 c1=read.csv2(here::here("Output","summary_coeff.csv"),
              sep=";",dec=".",h=T)
+
 ```
 
 
@@ -2168,13 +2430,13 @@ DT::datatable(TECELEW2tab,
 ```{r fig.width=8, fig.height=4}
 ggplot(allWtab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")), 
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +
   ylim(rev(allWtab$`Predictor variable`)) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
@@ -2189,13 +2451,13 @@ selected_vars <- allWtab$`Predictor variable`[1:3]
 
 ggplot(allWtab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
          filter(`Predictor variable` %in% selected_vars), 
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+   
   ylim(rev(selected_vars)) +
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
@@ -2209,13 +2471,13 @@ ggplot(allWtab %>%
 ```{r fig.width=8, fig.height=4}
 ggplot(TECELEWtab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")),
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +
   ylim(unique(rev(TECELEWtab$`Predictor variable`))) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+   
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
@@ -2231,14 +2493,14 @@ selected_vars <- TECELEWtab$`Predictor variable`[1:3]
 
 ggplot(TECELEWtab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
          filter(`Predictor variable` %in% selected_vars), 
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +  
   ylim(rev(selected_vars)) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+   
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
@@ -2253,13 +2515,13 @@ ggplot(TECELEWtab %>%
 ```{r fig.width=8, fig.height=4}
 ggplot(TECELEW2tab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")),
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +
   ylim(unique(rev(TECELEW2tab$`Predictor variable`))) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+   
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
@@ -2268,20 +2530,21 @@ ggplot(TECELEW2tab %>%
 ```
 
 
+
 ```{r fig.width=5, fig.height=3}
 # focus on ecology
 selected_vars <- TECELEW2tab$`Predictor variable`[1:9]
 
 ggplot(TECELEW2tab %>%
          rowwise() %>%
-         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+         mutate(`Avg. coeff.` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
                 `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
                 sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
          filter(`Predictor variable` %in% selected_vars), 
-       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+       aes(x = `Avg. coeff.`, y = `Predictor variable`, color = sig)) +
   scale_color_manual(values = c("y" = "black", "n" = "gray")) +  
   ylim(rev(selected_vars)) +
-  ylab("")+
+  labs(x="Avg. Estimate\n2.5% - 9.75% quantiles",y="")+   
   geom_point(size=2) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
@@ -2340,14 +2603,6 @@ GD_graph_params <-
 
 
 ## AllW
-### N obs for modeling
-
-```{r}
-range_GD <- range(mydatatogo$GD)
-range_vel <- range(mydatatogo$vel_abs)
-```
-
-#### allW
 
 ```{r }
 res=read.csv2(here::here("Output","summary_GDeff_allW.csv"),
@@ -2421,74 +2676,6 @@ gg1a <- gg1 + theme(legend.position="none") + ggtitle("") + theme(plot.title = e
 
 ```
 
-```{r echo=FALSE, fig.width=7, fig.height=7}
-# reduce resolution for better plotting
-# make a 10x10 matrix
-toplot <- predX2[,c("GD","vel_abs","pred1")]
-
-toplot$GD_breaks <- cut(toplot$GD,10)
-toplot$vel_abs_breaks <- cut(toplot$vel_abs,10)
-
-toplot2 <- toplot %>%
-  group_by(GD_breaks,vel_abs_breaks) %>%
-  summarise(pred1_avg = mean(pred1))
-
-toplot2$GD_breaks_min <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_max <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_min[which(toplot2$GD_breaks_min==min(toplot2$GD_breaks_min))] <- min(mydatatogo$GD)
-toplot2$GD_breaks_max[which(toplot2$GD_breaks_max==max(toplot2$GD_breaks_max))] <- max(mydatatogo$GD)
-toplot2$vel_abs_breaks_min <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_max <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_min[which(toplot2$vel_abs_breaks_min==min(toplot2$vel_abs_breaks_min))] <- min(mydatatogo$vel_abs)
-toplot2$vel_abs_breaks_max[which(toplot2$vel_abs_breaks_max==max(toplot2$vel_abs_breaks_max))] <- max(mydatatogo$vel_abs)
-
-# add data density
-toplot2$N <- NA
-for(i in 1:nrow(toplot2)){
-  tmp <- mydatatogo %>%
-    filter(GD >= toplot2$GD_breaks_min[i] & GD <= toplot2$GD_breaks_max[i] & 
-             vel_abs >= toplot2$vel_abs_breaks_min[i] & vel_abs <= toplot2$vel_abs_breaks_max[i])
-  toplot2$N[i] <- nrow(tmp)
-}
-
-surfplot <- xtabs(pred1_avg ~ vel_abs_breaks_min + GD_breaks_min, 
-                  data = toplot2 %>% filter(N>0))
-surfplot[surfplot==0] <- NA
-
-surfplot_color <- xtabs(N ~ vel_abs_breaks_min + GD_breaks_min, 
-                        data = toplot2 %>% filter(N>0))
-surfplot_color[surfplot_color==0] <- NA
-
-plot_ly(x = ~rownames(surfplot_color), 
-        y = ~colnames(surfplot_color),
-        z = ~t(surfplot)) %>%
-  add_surface(surfacecolor=t(surfplot_color)) %>%
-  layout(
-    scene = list(
-      xaxis = list(title = 'Velocity of isotherm shift',
-                   range = c(range_vel[1],range_vel[2])),
-      yaxis = list(title = 'Genetic diversity',
-                   range = c(range_GD[1],range_GD[2])),
-      zaxis = list(title = 'Velocity of range shift'),
-      aspectmode='cube'))
-
-
-```
-
-#### TEW
-
 ```{r fig.width=12/3,fig.height=5}
 
 res=read.csv2(here::here("Output","summary_GDeff_TEW.csv"),
@@ -2551,74 +2738,6 @@ gg1 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
                         breaks=c(seq(0,7,by=1)))  
 
 ```
-
-
-```{r echo=FALSE, fig.width=7, fig.height=7}
-# reduce resolution for better plotting
-# make a 10x10 matrix
-toplot <- predX2[,c("GD","vel_abs","pred1")]
-
-toplot$GD_breaks <- cut(toplot$GD,10)
-toplot$vel_abs_breaks <- cut(toplot$vel_abs,10)
-
-toplot2 <- toplot %>%
-  group_by(GD_breaks,vel_abs_breaks) %>%
-  summarise(pred1_avg = mean(pred1))
-
-toplot2$GD_breaks_min <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_max <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_min[which(toplot2$GD_breaks_min==min(toplot2$GD_breaks_min))] <- min(mydatatogo$GD)
-toplot2$GD_breaks_max[which(toplot2$GD_breaks_max==max(toplot2$GD_breaks_max))] <- max(mydatatogo$GD)
-toplot2$vel_abs_breaks_min <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_max <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_min[which(toplot2$vel_abs_breaks_min==min(toplot2$vel_abs_breaks_min))] <- min(mydatatogo$vel_abs)
-toplot2$vel_abs_breaks_max[which(toplot2$vel_abs_breaks_max==max(toplot2$vel_abs_breaks_max))] <- max(mydatatogo$vel_abs)
-
-# add data density
-toplot2$N <- NA
-for(i in 1:nrow(toplot2)){
-  tmp <- mydatatogo %>%
-    filter(GD >= toplot2$GD_breaks_min[i] & GD <= toplot2$GD_breaks_max[i] & 
-             vel_abs >= toplot2$vel_abs_breaks_min[i] & vel_abs <= toplot2$vel_abs_breaks_max[i])
-  toplot2$N[i] <- nrow(tmp)
-}
-
-surfplot <- xtabs(pred1_avg ~ vel_abs_breaks_min + GD_breaks_min, 
-                  data = toplot2 %>% filter(N>0))
-surfplot[surfplot==0] <- NA
-
-surfplot_color <- xtabs(N ~ vel_abs_breaks_min + GD_breaks_min, 
-                        data = toplot2 %>% filter(N>0))
-surfplot_color[surfplot_color==0] <- NA
-
-plot_ly(x = ~rownames(surfplot_color), 
-        y = ~colnames(surfplot_color),
-        z = ~t(surfplot)) %>%
-  add_surface(surfacecolor=t(surfplot_color)) %>%
-  layout(
-    scene = list(
-      xaxis = list(title = 'Velocity of isotherm shift',
-                   range = c(range_vel[1],range_vel[2])),
-      yaxis = list(title = 'Genetic diversity',
-                   range = c(range_GD[1],range_GD[2])),
-      zaxis = list(title = 'Velocity of range shift'),
-      aspectmode='cube'))
-
-```
-
-#### CEW
 
 ```{r fig.width=12/3,fig.height=5}
 
@@ -2684,75 +2803,6 @@ gg2 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
 
 ```
 
-```{r echo=FALSE, fig.width=7, fig.height=7}
-# reduce resolution for better plotting
-# make a 10x10 matrix
-toplot <- predX2[,c("GD","vel_abs","pred1")]
-
-toplot$GD_breaks <- cut(toplot$GD,10)
-toplot$vel_abs_breaks <- cut(toplot$vel_abs,10)
-
-toplot2 <- toplot %>%
-  group_by(GD_breaks,vel_abs_breaks) %>%
-  summarise(pred1_avg = mean(pred1))
-
-toplot2$GD_breaks_min <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_max <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_min[which(toplot2$GD_breaks_min==min(toplot2$GD_breaks_min))] <- min(mydatatogo$GD)
-toplot2$GD_breaks_max[which(toplot2$GD_breaks_max==max(toplot2$GD_breaks_max))] <- max(mydatatogo$GD)
-toplot2$vel_abs_breaks_min <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_max <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_min[which(toplot2$vel_abs_breaks_min==min(toplot2$vel_abs_breaks_min))] <- min(mydatatogo$vel_abs)
-toplot2$vel_abs_breaks_max[which(toplot2$vel_abs_breaks_max==max(toplot2$vel_abs_breaks_max))] <- max(mydatatogo$vel_abs)
-
-# add data density
-toplot2$N <- NA
-for(i in 1:nrow(toplot2)){
-  tmp <- mydatatogo %>%
-    filter(GD >= toplot2$GD_breaks_min[i] & GD <= toplot2$GD_breaks_max[i] & 
-             vel_abs >= toplot2$vel_abs_breaks_min[i] & vel_abs <= toplot2$vel_abs_breaks_max[i])
-  toplot2$N[i] <- nrow(tmp)
-}
-
-surfplot <- xtabs(pred1_avg ~ vel_abs_breaks_min + GD_breaks_min, 
-                  data = toplot2 %>% filter(N>0))
-surfplot[surfplot==0] <- NA
-
-surfplot_color <- xtabs(N ~ vel_abs_breaks_min + GD_breaks_min, 
-                        data = toplot2 %>% filter(N>0))
-surfplot_color[surfplot_color==0] <- NA
-
-plot_ly(x = ~rownames(surfplot_color), 
-        y = ~colnames(surfplot_color),
-        z = ~t(surfplot)) %>%
-  add_surface(surfacecolor=t(surfplot_color)) %>%
-  layout(
-    scene = list(
-      xaxis = list(title = 'Velocity of isotherm shift',
-                   range = c(range_vel[1],range_vel[2])),
-      yaxis = list(title = 'Genetic diversity',
-                   range = c(range_GD[1],range_GD[2])),
-      zaxis = list(title = 'Velocity of range shift'),
-      aspectmode='cube'))
-
-
-```
-
-
-#### LEW
-
 ```{r fig.width=12/3,fig.height=5}
 
 res=read.csv2(here::here("Output","summary_GDeff_LEW.csv"),
@@ -2816,70 +2866,6 @@ gg3 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
 
 ```
 
-```{r echo=FALSE, fig.width=7, fig.height=7}
-# reduce resolution for better plotting
-# make a 10x10 matrix
-toplot <- predX2[,c("GD","vel_abs","pred1")]
-
-toplot$GD_breaks <- cut(toplot$GD,10)
-toplot$vel_abs_breaks <- cut(toplot$vel_abs,10)
-
-toplot2 <- toplot %>%
-  group_by(GD_breaks,vel_abs_breaks) %>%
-  summarise(pred1_avg = mean(pred1))
-
-toplot2$GD_breaks_min <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_max <- sapply(toplot2$GD_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$GD_breaks_min[which(toplot2$GD_breaks_min==min(toplot2$GD_breaks_min))] <- min(mydatatogo$GD)
-toplot2$GD_breaks_max[which(toplot2$GD_breaks_max==max(toplot2$GD_breaks_max))] <- max(mydatatogo$GD)
-toplot2$vel_abs_breaks_min <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][1]
-  as.numeric(gsub("(","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_max <- sapply(toplot2$vel_abs_breaks, function(x){
-  tmp <- strsplit(as.character(x), ",")[[1]][2]
-  as.numeric(gsub("]","",tmp,fixed = TRUE))
-})
-toplot2$vel_abs_breaks_min[which(toplot2$vel_abs_breaks_min==min(toplot2$vel_abs_breaks_min))] <- min(mydatatogo$vel_abs)
-toplot2$vel_abs_breaks_max[which(toplot2$vel_abs_breaks_max==max(toplot2$vel_abs_breaks_max))] <- max(mydatatogo$vel_abs)
-
-# add data density
-toplot2$N <- NA
-for(i in 1:nrow(toplot2)){
-  tmp <- mydatatogo %>%
-    filter(GD >= toplot2$GD_breaks_min[i] & GD <= toplot2$GD_breaks_max[i] & 
-             vel_abs >= toplot2$vel_abs_breaks_min[i] & vel_abs <= toplot2$vel_abs_breaks_max[i])
-  toplot2$N[i] <- nrow(tmp)
-}
-
-surfplot <- xtabs(pred1_avg ~ vel_abs_breaks_min + GD_breaks_min, 
-                  data = toplot2 %>% filter(N>0))
-surfplot[surfplot==0] <- NA
-
-surfplot_color <- xtabs(N ~ vel_abs_breaks_min + GD_breaks_min, 
-                        data = toplot2 %>% filter(N>0))
-surfplot_color[surfplot_color==0] <- NA
-
-plot_ly(x = ~rownames(surfplot_color), 
-        y = ~colnames(surfplot_color),
-        z = ~t(surfplot)) %>%
-  add_surface(surfacecolor=t(surfplot_color)) %>%
-  layout(
-    scene = list(
-      xaxis = list(title = 'Velocity of isotherm shift',
-                   range = c(range_vel[1],range_vel[2])),
-      yaxis = list(title = 'Genetic diversity',
-                   range = c(range_GD[1],range_GD[2])),
-      zaxis = list(title = 'Velocity of range shift'),
-      aspectmode='cube'))
-
-```
 
 ### Fig across edges
 ```{r fig.width=12/3,fig.height=5}
@@ -3026,8 +3012,6 @@ gg12 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
 
 
 ```{r}
-## allW2_CE GDeff
-
 res=read.csv2(here::here("Output","summary_GDeff_allW2_CE.csv"),
               sep=";",dec=".",h=T) 
 c1=read.csv2(here::here("Output","summary_coeff.csv"),
@@ -3248,7 +3232,7 @@ p3 <- gg3 +
 
 legend <- cowplot::get_legend(
   gg3 +
-    scale_color_gradientn(colors = rampPallFunGD(x=1),
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
                           guide = guide_colourbar(title.position = "right",
                                                   barwidth = 1, barheight = 15),
                           limits=c(0, 7),
@@ -3268,6 +3252,25 @@ As climate velocity increases, low GD species move faster than high GD species t
 
 Across all range edges, low GD species move faster as climate velocity increases, whereas high GD species move slower.
 
+### Significant velocity values
+```{r}
+
+res=lapply(c("LE","CE","TE"), function(x){
+  tmp <- read.csv2(here::here("Output",paste0("summary_GDeff_allW2_","TE",".csv")),
+                   sep=";",dec=".",h=T)
+  tmp$edge = x
+  return(tmp)
+})
+
+res <- rbindlist(res)
+
+res %>%
+  group_by(edge) %>%
+  summarise(sig_inf = paste(vel_abs), collapse = " ,")
+
+
+
+```
 
 
 

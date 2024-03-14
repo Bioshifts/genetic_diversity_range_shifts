@@ -803,7 +803,7 @@ Nucleotide diversty changes with latitude, with higher values at low latitues.
 
 ```{r fig.width=10, fig.height=5}
 
-mundi <- terra::vect(rnaturalearth::ne_coastline(scale = 110, returnclass = "sp"))
+mundi <- rnaturalearth::ne_coastline(scale = 110, returnclass = "sv")
 mundi <- crop(mundi, ext(c(-180,180,-60,90)))
 
 # get vect gen div
@@ -838,10 +838,10 @@ if(get_raster_bioshifts=="YES"){
   names(rast_biov1) <- "SA"
   rast_biov1[rast_biov1==0] <- NA
   
-  writeRaster(rast_biov1, here::here("Data/raster_bioshifts_SA.tif"), overwrite = TRUE)
+  writeRaster(rast_biov1, here::here("Data/raster_bioshifts_SA_fonseca.tif"), overwrite = TRUE)
   
 } else {
-  rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA.tif"))
+  rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA_fonseca.tif"))
   rast_biov1 <- crop(rast_biov1, ext(mundi))
 }
 
@@ -860,6 +860,7 @@ gen_fig <- ggplot()+
   scale_fill_continuous(trans="log", 
                         alpha=.7,
                         labels=function(x) round(x,0),
+                        breaks=function(x) exp(seq(log(min(x)),log(max(x)),length.out=5)),
                         type = "viridis", name = "Species with\ngenetic data")+
   theme_void()
 
@@ -873,9 +874,10 @@ bio_fig <- ggplot() +
     palette = "viridi",
     alpha=.7,
     na.value = "white",
-    trans="log", 
-    labels=function(x) round(x,0),
-    breaks = seq(min(values_biov1), max(values_biov1), length.out = 5))+
+    # trans="log", 
+    # labels=function(x) round(x,0),
+    # breaks=function(x) exp(seq(log(min(x)),log(max(x)),length.out=5))
+    )+
   geom_spatvector(data=mundi)+
   theme_void()
 
@@ -888,7 +890,7 @@ bio_gen_fig <- bio_fig +
 bio_gen_fig +
   ggtitle("Genetic diversity data & BioShifts study areas")
 
-ggsave(filename = here::here("Figs/Map.pdf"), 
+ggsave(filename = here::here("Figs/Map_sp-level_GD.pdf"), 
        plot = bio_gen_fig, 
        width = 12,
        height = 5,
@@ -907,7 +909,7 @@ bio_gen_fig2 <- ggpubr::ggarrange(gen_fig,
 
 bio_gen_fig2
 
-ggsave(filename = here::here("Figs/Map2.pdf"), 
+ggsave(filename = here::here("Figs/Map_sp-level_GD2.pdf"), 
        plot = bio_gen_fig2, 
        width = 10,
        height = 8,
@@ -1001,19 +1003,19 @@ gen_dist_cent <- pblapply(1:nrow(data2go), function(i){
   
   # # Distance to the centroid
   dist_cent <- terra::distance(gen_v, bio_v)[1,]
-
+  
   # Distance to the North edge of the study area
   dist_N <- terra::distance(gen_v,
                             terra::vect(sub_gen[1,c("max_lat.x", "max_lat.y")],
                                         geom=c("max_lat.x", "max_lat.y"),
                                         crs = "+proj=longlat +datum=WGS84 +no_defs"))[1,]
-
+  
   # Distance to the South edge of the study area
   dist_S <- terra::distance(gen_v,
                             terra::vect(sub_gen[1,c("min_lat.x", "min_lat.y")],
                                         geom=c("min_lat.x", "min_lat.y"),
                                         crs = "+proj=longlat +datum=WGS84 +no_defs"))[1,]
-
+  
   # BioShifts SA
   bio_SA <- terra::vect(fgdb, layer = data2go$ID[i])
   canvas <- terra::rast(bio_SA, resolution = 0.5, vals=1)
@@ -1022,12 +1024,12 @@ gen_dist_cent <- pblapply(1:nrow(data2go), function(i){
   dist_edge <- terra::distance(canvas, gen_v)
   dist_edge <- mask(dist_edge, bio_SA)
   dist_edge <- terra::global(dist_edge,mean,na.rm = TRUE)[,1]
-
+  
   # return
   return(data.frame(dist_cent, dist_N, dist_S, dist_edge))
   
 })
- 
+
 gen_dist_cent <- do.call(rbind,gen_dist_cent)
 gen_dist_cent <- cbind(data2go[,c("ID","spp")], gen_dist_cent)
 

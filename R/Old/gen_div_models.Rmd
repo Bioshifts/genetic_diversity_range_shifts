@@ -12,59 +12,54 @@ output:
 # Load libraries and source code
 
 ```{r libs, message=FALSE}
-
 rm(list=ls())
 
-list.of.packages <- c("ggplot2", "data.table", "dplyr", "tidyr", "parallel", "bdc", "taxadb", "traitdataform", "pbapply", "tidyverse", "readxl", "lme4", "coefplot", "sjPlot", "sjmisc", "effects", "rgdal", "maptools", "terra", "MuMIn", "lsmeans", "GGally", "tidyterra", "glmmTMB", "DHARMa") 
+library(ggplot2)
+require(data.table)
+library(dplyr)
+library(tidyr)
+require(parallel)
+library(bdc)
+library(taxadb)
+library(traitdataform)
+library(pbapply)
+library(tidyverse)
+library(readxl)
+library(lme4)
+library(coefplot)
+library(sjPlot)
+library(sjmisc)
+library(effects)
+library(rgdal)
+library(maptools)
+library(terra)
+library(MuMIn)
+library(lsmeans)
+library(GGally)
+library(tidyterra)
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
 ```
 
 # Load data
 
 ```{r splist}
 
-# Use only Fonseca
-# mydataset <- read.csv(here::here("Data/gen_data_final_m5.csv"))
-mydataset <- read.csv(here::here("Data/gen_data_v1_dist2_fon.csv"))
-
-# how many data at each shift gradient
-mydataset %>%
-  group_by(Type) %>%
-  tally
-
-# how many data at each shift gradient / parameter
-mydataset %>%
-  group_by(Type,Param) %>%
-  tally
-
-summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
-summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
-
-summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
-summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
-
-summary(mydataset$velocity[which(mydataset$SHIFT>0)])
-summary(mydataset$velocity[which(mydataset$SHIFT<0)])
+mydataset <- read.csv("Data/gen_data_final.csv")
 
 ```
 
 # Data description
 
 **Genetic data**  
-- He = heterozigosite measurements from multiple data sources (DeKort et al 2021, Nature Communications; Lawrence and Fraser 2020, Global Ecology and Biogeography; Malin, Unpublished).  
-Genetic data was harmonized following multiple methods, so that measurements across different marker types are comparable:  
-- He_harm: transformation used in DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
+- He = heteroziogosite measurements from multiple data sources (DeKort et al 2021, Nature Communications; Lawrence and Fraser 2020, Global Ecology and Biogeography; Malin, Unpublished).  
+Genetic data was harmonized following multiple methods so that measurements across different marker types are comparable:  
+- He_harm = transformation used in DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
 1) scale values at each marker type  
 2) standardize (x - min)/(max-min)  
-- He_harm2: transformation suggested by Malin. Applies the function transform01 before a logit transformation. 
-1) transform01 >> The only intent of this function is to move slightly inward the values of He so that it allows applying logit transformation.
+- He_harm2 = transformation suggested by Malin. Applies the function transform01 before a logit transformation. 
+1) transform01 >> The only intent of this function is to move slightly inward the values of He so that it allows applying logit transformation.  
 2) apply logit transformation  
-- He_harm3: He_harm2 centered in zero.   
+- He_harm3 = He_harm2 centered in zero.   
 
 Genetic data was paired with bioshifts data based on geographical distance of observations. For each species range shift, get the closest He to the centroid (for O), to the max latitude (for LE, at the North hemisphere), and to the min latitude (for TE, at the North hemisphere) of the study area.   
 
@@ -78,23 +73,16 @@ We ran models using raw and *corrected* shift values. Corrected shifts were esti
 **Lag data**  
 We calculated lag as the difference between the velocity of temperature change and that of species range shift (lag = velocity - shift). A positive value means that a species range shift lag behind climate change velocity, values close to zero means species track climate change closely, whereas a negative value means species are shift their range faster than expected by the velocity of climate change (overshoot). In cases the velocity of climate change was negative, we change the sign of lag, so that positive values always mean lag, and negative values always mean overshoot.  
 We tried to account and explore for situations that may generate confusion, as described the metrics bellow:  
-- lag: velocity - shift (we change the sign of lag when velocity is negative)  
-- lag2: when species shift in the opposite direction of velocity, lag = velocity  
-- lag3: when shift is faster than velocity, lag = 0.  
+- lag = velocity - shift (we change the sign of lag when velocity is negative)  
+- lag2 = when species shift in the opposite direction of velocity, lag = velocity  
+- lag3 = when shift is faster than velocity, lag = 0.  
 
 
 # Select only shifts in the same direction of velocity
 ```{r}
 
-mydataset <- mydataset %>%
-  filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
-# 
-# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="pospos")])
-# summary(mydataset$SHIFT[which(mydataset$shift_vel_sign=="negneg")])
-# 
-# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="pospos")])
-# summary(mydataset$velocity[which(mydataset$shift_vel_sign=="negneg")])
-
+# mydataset <- mydataset %>%
+#     filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
 
 ```
 
@@ -102,27 +90,26 @@ mydataset <- mydataset %>%
 ```{r}
 
 n_groups = 5
-
 type_groups_lat <- mydataset %>%
-  filter(Type == "LAT") %>%
-  group_by(Group,Param) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>n_groups) %>%
-  group_by(Group) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>=3)
+    filter(Type == "LAT") %>%
+    group_by(Group,Param) %>%
+    dplyr::summarise(N = length(Param)) %>%
+    dplyr::filter(N>n_groups) %>%
+    group_by(Group) %>% 
+    dplyr::summarise(N = length(Param)) %>%
+    dplyr::filter(N>=3)
 
 type_groups_ele <- mydataset %>%
-  filter(Type == "ELE") %>%
-  group_by(Group,Param) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>n_groups) %>%
-  group_by(Group) %>%
-  dplyr::summarise(N = length(Param)) %>%
-  dplyr::filter(N>=3)
+    filter(Type == "ELE") %>%
+    group_by(Group,Param) %>%
+    dplyr::summarise(N = length(Param)) %>%
+    dplyr::filter(N>n_groups) %>%
+    group_by(Group) %>% 
+    dplyr::summarise(N = length(Param)) %>%
+    dplyr::filter(N>=3)
 
 mydataset <- mydataset %>%
-  dplyr::filter((Type == "LAT" & Group %in% type_groups_lat$Group) | (Type == "ELE" & Group %in% type_groups_ele$Group))
+    dplyr::filter((Type == "LAT" & Group %in% type_groups_lat$Group) | (Type == "ELE" & Group %in% type_groups_ele$Group)) 
 
 ```
 
@@ -132,7 +119,7 @@ mydataset <- mydataset %>%
 
 # LAT
 LAT_obs <- mydataset %>% 
-  filter(Type == "LAT")
+    filter(Type == "LAT")
 
 summary(LAT_obs$SHIFT_abs)
 hist(LAT_obs$SHIFT_abs)
@@ -142,7 +129,7 @@ thr
 
 rem <- which((LAT_obs$SHIFT_abs > thr[1]) & (LAT_obs$SHIFT_abs < thr[2]))
 if(any(rem)){
-  LAT_obs <- LAT_obs[rem,]
+    LAT_obs <- LAT_obs[rem,]
 }
 summary(LAT_obs$SHIFT_abs)
 hist(LAT_obs$SHIFT_abs)
@@ -152,7 +139,7 @@ hist(sqrt(LAT_obs$SHIFT_abs))
 
 # ELE
 ELE_obs <- mydataset %>% 
-  filter(Type == "ELE")
+    filter(Type == "ELE")
 
 summary(ELE_obs$SHIFT_abs)
 hist(ELE_obs$SHIFT_abs)
@@ -162,7 +149,7 @@ thr
 
 rem <- which((ELE_obs$SHIFT_abs > thr[1]) & (ELE_obs$SHIFT_abs < thr[2]))
 if(any(rem)){
-  ELE_obs <- ELE_obs[rem,]
+    ELE_obs <- ELE_obs[rem,]
 }
 summary(ELE_obs$SHIFT_abs)
 hist(ELE_obs$SHIFT_abs)
@@ -191,7 +178,6 @@ hist(mydataset$lag)
 # hist(mydataset$lag)
 ```
 
-
 # Playing with models
 
 ## Latitude
@@ -199,436 +185,1674 @@ hist(mydataset$lag)
 ```{r message=FALSE}
 
 mydatatogo <- mydataset  %>%
-  dplyr::filter(Type == "LAT") %>%
-  mutate(He_harm = scale(He_harm),
-         He_harm2 = scale(He_harm2),
-         He_harm3 = scale(He_harm3),
-         # He_harm_w = scale(He_harm),
-         # He_harm3_w = scale(He_harm3_w),
-         # He_harm3_w = scale(He_harm3_w),
-         velocity_raw = velocity,
-         velocity = scale(velocity_raw),
-         velocity_abs = scale(abs(velocity_raw)),
-         lag = scale(lag),
-         lag2 = scale(lag2),
-         lagC = scale(lagC),
-         lagC2 = scale(lagC2),
-         lagC3 = lagC3,
-         ID.area = scale(ID.area),
-         DUR = scale(DUR),
-         dist_weight = 1/log(min_dist), # this is the transformation I found leads to a normal distribution
-         START = scale(START),
-         SHIFT_raw = SHIFT,
-         SHIFT = scale(SHIFT_raw),
-         SHIFT_abs = 
-           # scale(sqrt(
-           SHIFT_abs
-         # ))
-         ,
-         SHIFT_cor_raw = SHIFT_cor,
-         SHIFT_cor = scale(SHIFT_cor_raw),
-         SHIFT_cor_abs = abs(SHIFT_cor),
-         Param = factor(Param),
-         Group = factor(Group),
-         spp = factor(spp)) %>%
-  dplyr::select(He_harm, He_harm3, He_harm3, 
-                # He_harm_w, He_harm3_w, He_harm3_w, 
-                lag, lag2, lag3, lagC, lagC2, lagC3, ECO,
-                SHIFT, SHIFT_abs, SHIFT_cor, SHIFT_cor_abs, SHIFT_raw, SHIFT_cor_raw,
-                Param, Group, spp, Class, Family, Genus, velocity, velocity_abs, velocity_raw,
-                START, DUR, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, ID.area, Sampling, Article_ID,
-                min_dist, dist_weight,
-                Marker,
-                shift_vel_sign)
-
-mydatatogo <- data.frame(mydatatogo)
-dim(mydatatogo)
-
-hist(mydatatogo$SHIFT_cor_abs)
-hist(mydatatogo$SHIFT_cor_raw)
-
-ggplot(mydatatogo %>%
-         filter(ECO=="M"),
-       aes(x=He_harm3,y=SHIFT_cor_raw))+
-  geom_point()+
-  theme_bw()
-
-ggplot(mydatatogo %>%
-         filter(ECO=="M"),
-       aes(x=He_harm3,y=SHIFT_raw))+
-  geom_point()+
-  theme_bw()
+    dplyr::filter(Type == "LAT") %>%
+    mutate(He_harm = scale(He_harm),
+           He_harm2 = scale(He_harm2),
+           He_harm3 = scale(He_harm3),
+           He_harm_w = scale(He_harm),
+           He_harm2_w = scale(He_harm2_w),
+           He_harm3_w = scale(He_harm3_w),
+           velocity = scale(velocity),
+           velocity_abs = scale(abs(velocity)),
+           lag = scale(lag),
+           lag2 = scale(lag2),
+           lagC = scale(lagC),
+           lagC2 = scale(lagC2),
+           lagC3 = lagC3,
+           ID.area = scale(ID.area),
+           DUR = scale(DUR),
+           dist_weight = 1/log(min_dist), # this is the transformation I found leads to a normal distribution
+           START = scale(START),
+           SHIFT = scale(SHIFT),
+           SHIFT_abs = scale(sqrt(SHIFT_abs)),
+           SHIFT_cor = scale(SHIFT_cor),
+           SHIFT_cor_abs = scale(sqrt(abs(SHIFT_cor))),
+           Param = factor(Param),
+           Group = factor(Group),
+           spp = factor(spp)) %>%
+    dplyr::select(He_harm, He_harm2, He_harm3, 
+                  He_harm_w, He_harm2_w, He_harm3_w, 
+                  lag, lag2, lag3, lagC, lagC2, lagC3, 
+                  SHIFT, SHIFT_abs, SHIFT_cor, SHIFT_cor_abs, 
+                  Param, Group, spp, Class, Family, Genus, velocity, velocity_abs,
+                  START, DUR, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, ID.area, Sampling, Article_ID,
+                  min_dist, dist_weight, Marker,shift_vel_sign)
 
 ```
 
 
-### Shift model Param
-```{r fig.height=10, fig.width=10}
+### Shift raw
+```{r fig.height=5, fig.width=5}
 
 model_data = mydatatogo
 
 # define the He metric to go
-model_data$He <- as.numeric(model_data$He_harm3)
-model_data$SHIFT <- as.numeric(model_data$SHIFT_cor_raw)
-# model_data$SHIFT <- as.numeric(model_data$SHIFT_raw)
+model_data$He <- model_data$He_harm2
 
-bestmodel <- lme::(SHIFT_cor_raw ~ 
-                     # Fixed effects
-                     ## Ecology
-                     velocity*He +
-                     ## Control Methods
-                     # START + ID.area + Sampling + Uncertainty_Parameter +
-                     # Uncertainty_Distribution + Grain_size + Data +
-                     # Random effects
-                     ## Studies
-                     (1|Article_ID)+
-                     ## Taxonomy
-                     (He|Group),
-                   # weight by distance of genetic data to range shift data
-                   # weights = dist_weight,
-                   data = model_data %>%
-                     filter(ECO=="T"),
-                   na.action = "na.omit")
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# remove study ID
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok!
+# Add marker to random effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# add marker to fixed effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# m3 = remove methods
+m3 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
 
-baseline <- lmer(SHIFT_cor_raw ~ 
-                   # Fixed effects
-                   ## Ecology
-                   velocity +
-                   ## Control Methods
-                   # START + ID.area + Sampling + Uncertainty_Parameter +
-                   # Uncertainty_Distribution + Grain_size + Data +
-                   # Random effects
-                   ## Studies
-                   (1|Article_ID)+
-                   ## Taxonomy
-                   (1|Group),
-                 # weight by distance of genetic data to range shift data
-                 # weights = dist_weight,
-                 REML=TRUE,
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+    r2s = MuMIn::r.squaredGLMM(x)
+    cbind(tmp,r2s)
+}
+)
+m_metr <- do.call(rbind,m_metr)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+
+# model 3 is the best
+
+# Check residuals of models
+bestmodel = m3
+
+plot(bestmodel)
+
+###################
+# Look at effects
+
+summary(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```
+
+
+### Shift corrected
+```{r}
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$SHIFT <- model_data$SHIFT_cor
+
+#########################
+# Find the best model structure
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# Add marker to random effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               # Random effects
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# add marker to fixed effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# linear model
+m3 <- lm(SHIFT ~ 
+             # Fixed effects
+             ## Ecology
+             He*Group*Param + velocity + I(velocity^2) + Marker,
+         # weight by distance of genetic data to range shift data
+         weights = dist_weight,
+         data = model_data,
+         na.action = "na.fail")
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    if(class(x)=="lm"){
+        tmp = data.frame(model = as.character(x$call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = summary(x)$r.squared
+    } else {
+        tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = MuMIn::r.squaredGLMM(x)
+    }
+    cbind(tmp,r2s)
+}
+)
+m_metr <- rbindlist(m_metr,fill = TRUE)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# LM is the best
+# However, model 1 and 2 explains more probably because spp is included 
+# Use model 1 (compare with model 2...)
+
+
+# Check residuals of models
+bestmodel = m2
+plot(bestmodel)
+
+###################
+# Look at effects
+
+summary(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```
+
+### Lag raw
+```{r }
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$lag <- model_data$lag2
+
+#########################
+# Select which methodological variables to include in the model
+m_lat_test <- lm(lag ~ START + DUR + ID.area + Sampling + Uncertainty_Parameter + Uncertainty_Distribution + Grain_size + Data,
                  data = model_data,
-                 na.action = "na.omit")
+                 na.action = "na.fail")
 
+car::vif(m_lat_test)
+# Remove DUR
 
-AIC(bestmodel,baseline)
+#########################
+# Find the best model structure
+
+# Add Param and Group to fixed effect
+m1 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# Add marker to random effect
+m2 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# m3 = remove methods
+m3 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+    r2s = MuMIn::r.squaredGLMM(x)
+    cbind(tmp,r2s)
+}
+)
+m_metr <- do.call(rbind,m_metr)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# model 3 is the best (but explains less than models with methods)
+
+# Check residuals of models
+bestmodel = m2
+plot(bestmodel)
+
+###################
+# Look at effects
 
 summary(bestmodel)
 
-tmp <- effects::allEffects(bestmodel)
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
 
-# plot(tmp$`velocity:He:Param`)
-plot(tmp$`velocity:He`)
-plot(tmp$`velocity:He`)
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```
+
+### Lag corrected
+```{r }
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$lag <- model_data$lagC2
+
+#########################
+# Find the best model structure
+m1 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + 
+               # Random effects
+               ## Taxonomy
+               (1|Family/Genus),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# add marker type
+m2 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + 
+               # Random effects
+               ## Taxonomy
+               (1|Family/Genus)+
+               ## Market type
+               (1|Marker),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+m3 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + 
+               # Random effects
+               ## Market type
+               (1|Marker),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# LM
+m4 <- lm(lag ~ 
+             # Fixed effects
+             ## Ecology
+             He*Group*Param + Marker,
+         # weight by distance of genetic data to range shift data
+         weights = dist_weight,
+         data = model_data,
+         na.action = "na.fail")
+# Compare
+model_list <- list(m1,m2,m3,m4)
+m_metr <- lapply(model_list, function(x){
+    if(class(x)=="lm"){
+        tmp = data.frame(model = as.character(x$call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = summary(x)$r.squared
+    } else {
+        tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = MuMIn::r.squaredGLMM(x)
+    }
+    cbind(tmp,r2s)
+}
+)
+m_metr <- rbindlist(m_metr,fill = TRUE)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# LM 1 is the best, but explains less
+
+# Check residuals of models
+bestmodel = m3
+
+plot(bestmodel)
+
+###################
+# Look at effects
 
 summary(bestmodel)
-confint(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
 
 
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
 
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
 
 ```
 
 
-### Code exp/cont I
-This makes all shifts positives and changes the sign of velocity when the raw shift is negative.
 
 
+### Lag corrected 3 (zero-inflated models)
+```{r }
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$lag <- model_data$lagC3
+
+#########################
+# Find the best model structure
+m1 <- glmmTMB::glmmTMB(lag ~ He*Group*Param+
+                           (1|Marker),
+                       ziformula=~1,
+                       family=poisson,
+                       data = model_data)
+
+# Check residuals of models
+res = DHARMa::simulateResiduals(m1)
+plot(res, rank = T)
+
+bestmodel = m1
+
+###################
+# Look at effects
+
+summary(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients$cond["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```
+
+
+
+
+
+
+
+
+
+
+
+## Elevation
 
 ```{r message=FALSE}
-# Code expansion vs contraction
-mydatatogo$Exp_Cont <- NA
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw <= 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw > 0)] <- "Exp"
 
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw < 0)] <- "Exp"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw >= 0)] <- "Cont"
+mydatatogo <- mydataset  %>%
+    dplyr::filter(Type == "ELE") %>%
+    mutate(He_harm = scale(He_harm),
+           He_harm2 = scale(He_harm2),
+           He_harm3 = scale(He_harm3),
+           He_harm_w = scale(He_harm),
+           He_harm2_w = scale(He_harm2_w),
+           He_harm3_w = scale(He_harm3_w),
+           velocity = scale(velocity),
+           lag = scale(lag),
+           lag2 = scale(lag2),
+           lagC = scale(lagC),
+           lagC2 = scale(lagC2),
+           ID.area = scale(ID.area),
+           DUR = scale(DUR),
+           dist_weight = 1/log(min_dist), # this is the transformation I found leads to a normal distribution
+           START = scale(START),
+           SHIFT = scale(SHIFT),
+           SHIFT_abs = scale(sqrt(SHIFT_abs)),
+           SHIFT_cor = scale(SHIFT_cor),
+           SHIFT_cor_abs = scale(sqrt(abs(SHIFT_cor))),
+           Param = factor(Param),
+           Group = factor(Group),
+           spp = factor(spp)) %>%
+    dplyr::select(He_harm, He_harm2, He_harm3, 
+                  He_harm_w, He_harm2_w, He_harm3_w, 
+                  lag, lag2, lag3, lagC, lagC2, lagC3, 
+                  SHIFT, SHIFT_abs, SHIFT_cor, SHIFT_cor_abs, 
+                  Param, Group, velocity, spp, Class, Family, Genus,
+                  START, DUR, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, ID.area, Sampling, Article_ID,
+                  min_dist, dist_weight, Marker)
 
-mydatatogo$Exp_Cont[
-  which(mydatatogo$Param == "O" & 
-          (mydatatogo$shift_vel_sign == "pospos"  | 
-             mydatatogo$shift_vel_sign == "negneg"))] <- "Exp"
-mydatatogo$Exp_Cont[
-  which(mydatatogo$Param == "O" & 
-          (mydatatogo$shift_vel_sign == "posneg"  | 
-             mydatatogo$shift_vel_sign == "negpos"))] <- "Cont"
 
-table(mydatatogo$Exp_Cont)
+```
 
-any(is.na(mydatatogo$shift_vel_sign))
-summary(mydatatogo$velocity_raw[which(mydatatogo$shift_vel_sign=="pospos")])
-summary(mydatatogo$velocity_raw[which(mydatatogo$shift_vel_sign=="negneg")])
+### Shift raw
+```{r fig.height=5, fig.width=5}
 
-summary(mydatatogo$SHIFT_raw[which(mydatatogo$shift_vel_sign=="pospos")])
-summary(mydatatogo$SHIFT_raw[which(mydatatogo$shift_vel_sign=="negneg")])
+model_data = mydatatogo
 
-summary(mydatatogo$velocity_raw[which(mydatatogo$SHIFT_raw>0)])
-summary(mydatatogo$velocity_raw[which(mydatatogo$SHIFT_raw<0)])
+# define the He metric to go
+model_data$He <- model_data$He_harm2
 
-plot(SHIFT_raw~velocity_raw,mydatatogo)
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# remove study ID
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok!
+# Add marker to random effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# add marker to fixed effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# m3 = remove methods
+m3 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|Family),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
 
-# Fix shift & velocity sign
-mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor
-# mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor_raw
-mydatatogo$velocitynew <- mydatatogo$velocity_raw
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+    r2s = MuMIn::r.squaredGLMM(x)
+    cbind(tmp,r2s)
+}
+)
+m_metr <- do.call(rbind,m_metr)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
 
-pos <- which(mydatatogo$Param == "LE" & mydatatogo$SHIFT_raw <= 0)
-mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
-mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+# model 3 is the best
 
-pos <- which(mydatatogo$Param == "TE" & mydatatogo$SHIFT_raw <= 0)
-mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
-mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+# Check residuals of models
+bestmodel = m3
 
-pos <- which(mydatatogo$Param == "O" & mydatatogo$SHIFT_raw <= 0)
-mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
-mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
+plot(bestmodel)
 
-summary(mydatatogo$SHIFTnew)
-summary(mydatatogo$velocitynew)
+###################
+# Look at effects
 
-plot(SHIFTnew~velocitynew,mydatatogo)
+summary(bestmodel)
 
-hist(mydatatogo$SHIFTnew)
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
 
-hist(mydatatogo$velocitynew)
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
 
-dim(mydatatogo)
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
 
-ggplot(mydatatogo, aes(x = Exp_Cont, y = He_harm3))+
-  geom_boxplot()
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
 
-mod1 <- aov(He_harm3 ~ Exp_Cont, mydatatogo)
-summary(mod1)
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
 
 ```
 
 
-
-#### Shift model Exp/Cont I
-
+### Shift corrected
 ```{r}
 
 model_data = mydatatogo
 
 # define the He metric to go
-model_data$He <- as.numeric(model_data$He_harm3)
+model_data$He <- model_data$He_harm2
 # define the lag metric to go
-model_data$SHIFT <- as.numeric(model_data$SHIFTnew)
-model_data$velocity <- as.numeric(model_data$velocitynew)
-model_data$Exp_Cont <- factor(model_data$Exp_Cont)
+model_data$SHIFT <- model_data$SHIFT_cor
 
-model_data <- na.omit(model_data[,c("SHIFT","velocity","Exp_Cont","He","Article_ID","Group")])
+#########################
+# Find the best model structure
+m1 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# Add marker to random effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) +
+               # Random effects
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# add marker to fixed effect
+m2 <- lmer(SHIFT ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + velocity + I(velocity^2) + Marker +
+               # Random effects
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# linear model
+m3 <- lm(SHIFT ~ 
+             # Fixed effects
+             ## Ecology
+             He*Group*Param + velocity + I(velocity^2) + Marker,
+         # weight by distance of genetic data to range shift data
+         weights = dist_weight,
+         data = model_data,
+         na.action = "na.fail")
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    if(class(x)=="lm"){
+        tmp = data.frame(model = as.character(x$call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = summary(x)$r.squared
+    } else {
+        tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = MuMIn::r.squaredGLMM(x)
+    }
+    cbind(tmp,r2s)
+}
+)
+m_metr <- rbindlist(m_metr,fill = TRUE)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# LM is the best
+# However, model 1 and 2 explains more probably because spp is included 
+# Use model 1 (compare with model 2...)
 
-bestmodel <- glmer(SHIFT ~ 
-                     # Fixed effects
-                     ## Ecology
-                     velocity*He*Exp_Cont +
-                     ## Control Methods
-                     # START + ID.area + Sampling + Uncertainty_Parameter +
-                     # Uncertainty_Distribution + Grain_size + Data +
-                     # Random effects
-                     ## Studies
-                     (1|Article_ID)+
-                     ## Taxonomy
-                     (1|Group),
-                   # weight by distance of genetic data to range shift data
-                   # weights = dist_weight,
-                   data = model_data,
-                   na.action = "na.fail")
 
-baseline <- glmer(SHIFT ~ 
-                    # Fixed effects
-                    ## Ecology
-                    velocity*Exp_Cont +
-                    ## Control Methods
-                    # START + ID.area + Sampling + Uncertainty_Parameter +
-                    # Uncertainty_Distribution + Grain_size + Data +
-                    # Random effects
-                    ## Studies
-                    (1|Article_ID)+
-                    ## Taxonomy
-                    (1|Group),
-                  # weight by distance of genetic data to range shift data
-                  # weights = dist_weight,
-                  # family = Gamma(link = "logit"),
-                  data = model_data,
-                  na.action = "na.fail")
+# Check residuals of models
+bestmodel = m2
+plot(bestmodel)
 
-
-AIC(bestmodel,baseline)
-
-plot(simulateResiduals(bestmodel))
+###################
+# Look at effects
 
 summary(bestmodel)
 
-tmp <- effects::allEffects(bestmodel)
-plot(tmp$`velocity:He:Exp_Cont`)
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
 
-plot(effect("He*Exp_Cont", bestmodel)) # He leads to faster contractions and slower expansions
-plot(effect("velocity:He", bestmodel)) # He interacts with velocity to affect shift. Shift is larger when He is high and velocity is high. The isolated effect of He and velocity on Shift is not significant.
-plot(effect("velocity:He:Exp_Cont", bestmodel)) # Marginal effect >> When He is high, there are more contractions with increasing velocity. When He is low, there is less contractions with increasing velocities.
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
 
-```
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
 
 
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
 
-## Code exp/cont II
-This makes all velocities positive and changes the sign of shift when in the opposite direction of velocity.
-The shift now represents the expectation of shift relative to the velocity.
-Positive values represent shift is the same direction of velocity.
-Negative in the opposite direction.
-```{r message=FALSE}
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
 
-# Code expansion vs contraction
-mydatatogo$Exp_Cont <- NA
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Exp"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Exp"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "LE" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Cont"
-
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Exp"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "TE" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Exp"
-
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Exp"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
-                            mydatatogo$SHIFT_raw >= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw > 0)] <- "Cont"
-mydatatogo$Exp_Cont[which(mydatatogo$Param == "O" & 
-                            mydatatogo$SHIFT_raw <= 0  & 
-                            mydatatogo$velocity_raw < 0)] <- "Exp"
-
-# Fix shift & velocity sign
-mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor
-# mydatatogo$SHIFTnew <- mydatatogo$SHIFT_cor_raw
-mydatatogo$velocitynew <- mydatatogo$velocity_raw
-
-pos <- which(mydatatogo$velocity_raw <= 0)
-mydatatogo$SHIFTnew[pos] <- mydatatogo$SHIFT_raw[pos] * -1
-mydatatogo$velocitynew[pos] <- mydatatogo$velocity_raw[pos] * -1
-
-summary(mydatatogo$SHIFTnew)
-summary(mydatatogo$velocitynew)
-
-plot(SHIFTnew~velocitynew,mydatatogo)
-
-ggplot(mydatatogo, aes(x = Exp_Cont, y = velocitynew))+
-  geom_boxplot()+
-  facet_wrap(.~Param)
-
-ggplot(mydatatogo, aes(x = Exp_Cont, y = velocity))+
-  geom_jitter(width = .3)+
-  facet_wrap(.~Param)
-
-ggplot(mydatatogo, aes(x = Exp_Cont, y = SHIFTnew))+
-  geom_jitter(width = .3)+
-  facet_wrap(.~Param)
-
-ggplot(mydatatogo, aes(x = Exp_Cont))+
-  geom_bar()+
-  facet_wrap(.~Param)
-
-ggplot(mydatatogo, aes(x = Exp_Cont, y = SHIFTnew))+
-  geom_violin()
-
-ggplot(mydatatogo, aes(x = Exp_Cont, y = He_harm3))+
-  geom_violin()
-
-hist(mydatatogo$SHIFTnew[mydatatogo$Exp_Cont=="Exp"],breaks = 100)
-
-ggplot(mydatatogo, aes(x = He_harm3, y = SHIFTnew))+
-  geom_point()+
-  facet_wrap(.~Exp_Cont)+
-  geom_smooth(method='lm')
+all_ef[,c("effect","Coeff","LCI","UCI")]
 
 ```
 
-### Shift model Exp/Cont
-
-```{r}
+### Lag raw
+```{r }
 
 model_data = mydatatogo
 
 # define the He metric to go
-model_data$He <- as.numeric(scale(model_data$He_harm3))
+model_data$He <- model_data$He_harm2
 # define the lag metric to go
-model_data$SHIFT <- as.numeric(scale(model_data$SHIFTnew))
-model_data$velocity <- as.numeric(scale(model_data$velocitynew))
-model_data$Exp_Cont <- factor(model_data$Exp_Cont)
+model_data$lag <- model_data$lag2
 
-model_data <- na.omit(model_data[,c("SHIFT","velocity","Exp_Cont","He","Article_ID","Group")])
+#########################
+# Select which methodological variables to include in the model
+m_lat_test <- lm(lag ~ START + DUR + ID.area + Sampling + Uncertainty_Parameter + Uncertainty_Distribution + Grain_size + Data,
+                 data = model_data,
+                 na.action = "na.fail")
 
-bestmodel <- glmer(SHIFT ~ 
-                     # Fixed effects
-                     ## Ecology
-                     velocity*He*Exp_Cont +
-                     ## Control Methods
-                     # START + ID.area + Sampling + Uncertainty_Parameter +
-                     # Uncertainty_Distribution + Grain_size + Data +
-                     # Random effects
-                     ## Studies
-                     (1|Article_ID)+
-                     ## Taxonomy
-                     (1|Group),
-                   # weight by distance of genetic data to range shift data
-                   # weights = dist_weight,
-                   family = gaussian(),
-                   data = model_data,
-                   na.action = "na.fail")
+car::vif(m_lat_test)
+# Remove DUR
 
-baseline <- glmer(SHIFT ~ 
-                    # Fixed effects
-                    ## Ecology
-                    velocity*Exp_Cont +
-                    ## Control Methods
-                    # START + ID.area + Sampling + Uncertainty_Parameter +
-                    # Uncertainty_Distribution + Grain_size + Data +
-                    # Random effects
-                    ## Studies
-                    (1|Article_ID)+
-                    ## Taxonomy
-                    (1|Group),
-                  # weight by distance of genetic data to range shift data
-                  # weights = dist_weight,
-                  family = gaussian(),
-                  data = model_data,
-                  na.action = "na.fail")
+#########################
+# Find the best model structure
 
+# Add Param and Group to fixed effect
+m1 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Singular
+# Add marker to random effect
+m2 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               ## Control Methods
+               START + ID.area + Sampling + Uncertainty_Parameter + 
+               Uncertainty_Distribution + Grain_size + Data +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# m3 = remove methods
+m3 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param +
+               # Random effects
+               ## Studies
+               (1|Article_ID)+
+               ## Market type
+               (1|Marker)+
+               ## Taxonomy
+               (1|spp),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
 
-AIC(bestmodel,baseline)
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+    r2s = MuMIn::r.squaredGLMM(x)
+    cbind(tmp,r2s)
+}
+)
+m_metr <- do.call(rbind,m_metr)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# model 3 is the best (but explains less than models with methods)
 
-plot(simulateResiduals(bestmodel))
+# Check residuals of models
+bestmodel = m2
+plot(bestmodel)
+
+###################
+# Look at effects
 
 summary(bestmodel)
 
-tmp <- effects::allEffects(bestmodel)
-plot(tmp$`velocity:He:Exp_Cont`)
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
 
-plot(effect("He*Exp_Cont", bestmodel)) # He leads faster expansion in the same direction of velocity.
-plot(effect("velocity:Exp_Cont", bestmodel)) # Velocity leads faster expansion in the same direction of velocity.
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```
+
+### Lag corrected
+```{r }
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$lag <- model_data$lagC2
+
+#########################
+# Find the best model structure
+m1 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + 
+               # Random effects
+               ## Taxonomy
+               (1|Family/Genus),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# add marker type
+m2 <- lmer(lag ~ 
+               # Fixed effects
+               ## Ecology
+               He*Group*Param + 
+               # Random effects
+               ## Taxonomy
+               (1|Family/Genus)+
+               ## Market type
+               (1|Marker),
+           # weight by distance of genetic data to range shift data
+           weights = dist_weight,
+           # Other LME params
+           control = lmerControl(optimizer ="Nelder_Mead"),
+           REML=TRUE,
+           data = model_data,
+           na.action = "na.fail")
+# Ok
+# LM
+m3 <- lm(lag ~ 
+             # Fixed effects
+             ## Ecology
+             He*Group*Param + Marker,
+         # weight by distance of genetic data to range shift data
+         weights = dist_weight,
+         data = model_data,
+         na.action = "na.fail")
+# Compare
+model_list <- list(m1,m2,m3)
+m_metr <- lapply(model_list, function(x){
+    if(class(x)=="lm"){
+        tmp = data.frame(model = as.character(x$call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = summary(x)$r.squared
+    } else {
+        tmp = data.frame(model = as.character(x@call[2]), BIC = BIC(x),AIC=AIC(x))
+        r2s = MuMIn::r.squaredGLMM(x)
+    }
+    cbind(tmp,r2s)
+}
+)
+m_metr <- rbindlist(m_metr,fill = TRUE)
+m_metr$DeltaAIC <- m_metr$AIC - min(m_metr$AIC)
+m_metr[order(m_metr$DeltaAIC),]
+# LM 1 is the best, but explains less
+
+# Check residuals of models
+bestmodel = m2
+
+plot(m2)
+
+###################
+# Look at effects
+
+summary(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
 
 ```
 
 
 
+
+### Lag corrected 3 (zero-inflated models)
+```{r }
+
+model_data = mydatatogo
+
+# define the He metric to go
+model_data$He <- model_data$He_harm2
+# define the lag metric to go
+model_data$lag <- model_data$lagC3
+
+#########################
+# Find the best model structure
+m1 <- glmmTMB::glmmTMB(lag ~ He*Group*Param+
+                           (1|Marker),
+                       ziformula=~1,
+                       family=poisson,
+                       data = model_data)
+
+# Check residuals of models
+res = DHARMa::simulateResiduals(m1)
+plot(res, rank = T)
+
+bestmodel = m1
+
+###################
+# Look at effects
+
+summary(bestmodel)
+
+g_eff <- data.frame(Group = "Global", Coeff = NA, LCI = NA, UCI = NA)
+g_eff$Coeff <- summary(bestmodel)$coefficients$cond["He",1]
+g_eff[1,c("LCI","UCI")] <- as.numeric(confint(bestmodel, parm = "He"))
+g_eff$level = ""
+g_eff
+
+# Plot fixed effects of bestmodel
+## Param
+p_ef <- data.frame(emtrends(bestmodel, ~ Param, var="He"))
+names(p_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+p_ef$level = "Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Param))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group
+g_ef <- data.frame(emtrends(bestmodel, ~ Group, var="He"))
+names(g_ef)[c(2,5,6)] <- c("Coeff","LCI","UCI")
+g_ef$level = "Group"
+
+# ggplot(m_ef, aes(Coeff, Group, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+## Group*Param
+pg_ef <- data.frame(emtrends(bestmodel, ~ Param*Group, var="He"))
+names(pg_ef)[c(3,6,7)] <- c("Coeff","LCI","UCI")
+pg_ef$level = "Group x Edge"
+
+# ggplot(m_ef, aes(Coeff, Param, color = Group))+
+#     geom_point()+
+#     geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+#     facet_wrap(.~Group, scales = "free")+
+#     xlab("Std. Coefficient")+
+#     geom_vline(xintercept = 0, linetype = "dashed")
+
+
+# Group all
+all_ef <- rbindlist(list(g_eff, p_ef, g_ef, pg_ef), fill = TRUE)
+all_ef$effect <- paste(all_ef$Group, all_ef$Param)
+all_ef$effect <- gsub("NA ", "", all_ef$effect)
+all_ef$effect <- gsub(" NA", "", all_ef$effect)
+all_ef$effect <- factor(all_ef$effect, 
+                        levels = rev(c("Global", 
+                                       as.character(unique(p_ef$Param)), 
+                                       as.character(unique(g_ef$Group)),
+                                       as.character(unique(paste(all_ef$Group, all_ef$Param))))))
+all_ef$level <- factor(all_ef$level, 
+                       levels = c("","Edge","Group","Group x Edge"))
+
+ggplot(all_ef, aes(Coeff, effect))+
+    geom_point()+
+    geom_pointrange(aes(xmin = LCI, xmax = UCI))+
+    facet_grid(level~., scales = "free", space = "free_y", switch = "y")+
+    xlab("Std. Coefficient")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    theme_classic()+
+    theme(strip.text.y = element_text(angle = 0), strip.background.y = element_blank())
+
+all_ef[,c("effect","Coeff","LCI","UCI")]
+
+```

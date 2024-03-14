@@ -1,0 +1,3919 @@
+---
+title: "Adaptive potential models"
+author: "Bioshifts group"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Overview
+
+Genetic diversity (GD) is an important component of biodiversity because it provides adaptive potential (Frankham, 2005), facilitates species persistence (Frankham, 2005; Pereira et al., 2012), and provides clues about the historical demography of species (Avise, 2000). Low GD (due to inbreeding or genetic drift) likely threatens species against environmental change or fluctuation and could indicate areas were populations are going extinct. Here we test the potential of GD in modulating species responses to climate exposure by shifting their ranges. Ongoing climate change has triggered a massive redistribution of species on Earth (Parmesan & Yole, 2003; Lenoir et al. 2020), with far reaching consequences on ecosystems and human well-being (Scheffers et al. 2016). These range shifts are highly idiosyncratic, likely reflecting differences in climate exposure but also species sensitivity and capacity to adapt to environmental changes. Yet, we still lack a clear understanding of the mechanisms of species response to climate exposure across taxonomic groups and habitats.
+
+We contrast two hypotheses by which adaptive potential from GD modulates species sensitivity to climate exposure. The first hypothesis proposes GD allows species to better track climate change. In this scenario, GD confers species' with ability to rapidly colonize new areas that become suitable as climate change. This may occur if adaptive potential is linked to ecological generalism, competition advantages or plasticity when colonizing new areas. In contrast, low GD may promote species range shifts driven by extirpation. The second hypothesis states that GD allows species to stay in place as climate change. In this scenario GD increases plasticity or allow fast evolution of traits for tolerating new climate conditions, so that species do not have to move for tracking climate change.
+
+We test if these mechanisms hold across different parts of a species range, which may provide deeper insights into the processes by which GD modulates species responses to climate change. At the trailing edge (or warm edge) species are typically closer to their upper thermal limit. If GD helps species to track climate change at the trailing edge, it might minimize rates of extinction and range contractions from climate change. In contrast, if GD helps species stay in place as climate change at the trailing edge, it indicates GD facilitates evolution or plasticity of thermal tolerance. At the leading edge (or cold edge), climate change often implies expansion of suitable area. If GD helps species to track climate change at the leading edge, it might facilitate colonization and range expansions. In contrast, if GD helps species stay in place as climate change at the leading edge, this indicates a decoupling between GD and colonization rates, or at least that the effect of GD on colonization rate is not enough for species to keep up with rates of climate change.
+
+# Load in data
+
+## Load libraries
+
+```{r libs, message=FALSE, warning=FALSE, warning=FALSE}
+
+# remotes::install_github("bbolker/broom.mixed")
+
+rm(list=ls())
+
+list.of.packages <- c(
+  "ggplot2", "data.table","pdftools","plotly","kableExtra",
+  "pbapply","dplyr", "tidyr", "foreach", "parallel", "doParallel",
+  "scales","effects","psych", "glmmTMB", "lme4", "lmerTest",
+  "here","rlist","ggtext","gridExtra","grid","lattice","viridis", "patchwork", "purrr") 
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+
+```
+
+## Load data
+
+```{r splist}
+
+mydataset <- read.csv(here("Data/gen_data_final_distance_pop-level.csv") )
+mydataset$Nucleotide_diversity <- mydataset$He_harm
+mydataset$Latitude <- mydataset$lat
+mydataset$dist_cent <- mydataset$min_dist
+
+```
+
+## Latitude data
+
+```{r message=FALSE, warning=FALSE}
+
+mydatatogo <- mydataset  %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos" | shift_vel_sign == "negneg", # Select only shifts in the same direction of velocity
+                SHIFT != 0, # remove non-significant shifts
+                # Nucleotide_diversity > 0 # select only GD values > 0
+  ) %>% 
+  mutate(
+    # Climate velocity
+    vel = as.numeric(velocity),
+    vel_abs = abs(vel),
+    vel_abs_log = log(vel_abs),
+    vel_abs_log1p = log1p(vel_abs),
+    
+    # Shift
+    SHIFT = SHIFT, # to deal with zero shift
+    SHIFT_abs = abs(SHIFT),
+    SHIFT_abs_log = log(SHIFT_abs),
+    SHIFT_abs_log1p = log1p(SHIFT_abs),
+    
+    # Genetic diversity
+    GD = Nucleotide_diversity, 
+    GD_sqrt = sqrt(GD),
+    GD_log = log(GD),
+    GD_log1p = log1p(GD),
+    
+    # Methods
+    Lat = abs(Latitude),
+    Lat_band = round(Lat,0),
+    ID.area = scale(ID.area),
+    DUR = scale(DUR),
+    LogExtent = log(Extent),
+    START = scale(START),
+    Param = factor(Param),
+    Group = factor(Group),
+    spp = factor(spp), 
+    ExtentF = cut(Extent,
+                  ordered_result = TRUE,
+                  breaks=seq(min(Extent), max(Extent), length.out=10),
+                  include.lowest=TRUE),
+    NtempUnitsF = cut(NtempUnits,
+                      ordered_result = TRUE,
+                      breaks=seq(min(NtempUnits), max(NtempUnits), length.out=10),
+                      include.lowest=TRUE)) %>%
+  
+  dplyr::select(
+    # Genetic diversity
+    GD, GD_log, GD_log1p, GD_sqrt, 
+    # Shift
+    SHIFT, SHIFT_abs, SHIFT_abs_log, SHIFT_abs_log1p, 
+    # SHIFT_cor, SHIFT_cor_abs, SHIFT_cor_abs_log, SHIFT_cor_raw, SHIFT_abs_log_scale,
+    # Velocity
+    vel, vel_abs, vel_abs_log, vel_abs_log1p, 
+    trend.mean,
+    # Methods + Taxonomy
+    Article_ID, 
+    Hemisphere,
+    shift_vel_sign,
+    Lat, # latitudinal position where GD was collected
+    Lat_band,
+    DUR, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, NtempUnitsF,
+    Param, Group, spp, Class, Order, Family, Genus, 
+    ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Article_ID,
+    # whereas GD data overlaps with the range shift's study area
+    # overlap_SA,
+    # Distance from GD data to Bioshifts SA
+    dist_cent, # distance to the centroid of the SA
+    # dist_N, # distance to the North edge of the SA (equivalent to the distance to the LE at the North hemisphere)
+    # dist_S, # distance to the South edge of the SA (equivalent to the distance to the TE at the North hemisphere)
+    # dist_edge # distance to the closest edge of the SA
+  ) 
+
+
+# transform continuous variables
+cont_vars <- c(1:14, 18:25, 42)
+
+mydatatogo[,cont_vars] <- lapply(mydatatogo[,cont_vars], as.numeric)
+mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
+
+
+```
+
+## Filter Classes with at least 5 species per Param
+
+```{r}
+
+n_sps = 5
+
+test <- mydatatogo %>%
+  group_by(Class,Param) %>%
+  dplyr::summarise(N_spp = length(unique(spp))) %>% # how many species per parameter?
+  dplyr::filter(N_spp >= n_sps) # select classes with > n_sps per param
+
+test <- mutate(test, Class_Param = paste(Class, Param))
+
+mydatatogo <- mydatatogo %>%
+  mutate(Class_Param = paste(Class, Param)) %>%
+  filter(Class_Param %in% test$Class_Param) %>%
+  select(-Class_Param)
+
+mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
+
+```
+
+## Extra fixes
+
+```{r}
+
+# Fix param levels
+mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
+
+# Calculate N obs per species
+N_obs_spp <- mydatatogo %>%
+  group_by(spp) %>%
+  tally()
+
+N_obs_spp$weight_obs_spp <- (1/N_obs_spp$n)*(1/nrow(N_obs_spp))
+
+mydatatogo <- merge(mydatatogo,N_obs_spp,by="spp")
+sum(mydatatogo$weight_obs_spp)
+
+```
+
+# Data description
+
+Genetic diversity (GD) data was extracted from Fonseca et al. (2023), describing patterns of intraspecific Genetic diversity. Genetic diversity was calculated from aggregated georeferenced mitochondrial DNA for animals (vertebrates, arachnids, and insects) and chloroplast DNA for plants using `phylogatR` (Pelletier et al., 2021; <https://phylogatr.osc.edu>), an open-source platform available through the Ohio Supercomputer Center (OSC). `phylogatR` retrieves genetic and geographic data by integrating information from the GBIF (<https://www.gbif.org/>), GenBank (<https://www.ncbi.nlm.nih.gov/genbank/>), and the BOLD (<http://www.boldsystems.org/index.php>). To minimize data loss and duplication when downloading data from GenBank, duplicate entries with the same accession number, but different GBIF occurrence numbers are checked for similarities in geographic coordinates. Sequences with high values of divergence were removed (likely resulting from inclusion of a sequence with an incorrect species label), a conservative approach that prevents inflation on the calculation of genetic diversity within species. Genetic diversity was calculated as the number of polymorphic sites in pairwise sequence comparison, using a modified version of the equation proposed by Nei and Li (1979) to allow for a comparison of sequences of different lengths (Miraldo et al. 2016). Finally, Genetic diversity between pairs of sequences were averaged to obtain a global estimation of Genetic diversity for each species, and associated centroid of georeferenced DNA sequences.
+
+We gather range shift estimates from the BioShifts database (Comte et al. 2020). These shift estimates were collated from multiple published literature sources that used different methodological protocols. Previous studies have shown that methodological aspects play an important role in explaining variability in species range shifts (Lenoir et al. 2020). Beyond range shift data, we also gathered from BioShifts climate velocity estimates following the method from Burrows at al. (2014), the position of a species range where range shifts were estimated (leading edge, centroid or trailing edge), and methodological variables representing the number of temporal units (continuous), grain size (small, moderate or large), data type (abundance-based vs occurrence-based), quality (balanced, raw, resurveyed), and study area extent (log km). We focus on latitudinal shifts across terrestrial and marine organisms, excluding elevational range shifts. We also excluded range shifts at the opposite direction of the climate exposure gradient, which can be related to local extinction processes or because species may be tracking climate axes other then temperature (e.g., humidity).
+
+In order to maximize the match of species when merging range shifts and GD datasets, we harmonize species names using a customized function that borrows from the R packages `rgbif` and `bdc`. Our final dataset includes `r nrow(mydatatogo)` shifts for `r length(unique(mydatatogo$spp))` species from `r length(unique(mydatatogo$Class))` major taxonomy classes (`r unique(mydatatogo$Class)`).
+
+```{r message=FALSE, warning=FALSE}
+
+# N species
+length(unique(mydatatogo$spp))
+# 201
+
+# N species per Class
+mydatatogo %>% group_by(Class) %>% summarise(n = length(unique(spp)))
+#   Class              n
+# 1 Aves             105
+# 2 Actinopterygii    50
+# 3 Magnoliopsida     27
+# 4 Liliopsida         5
+# 5 Pinopsida          9
+# 6 Mammalia           5
+
+# N species per range position
+mydatatogo %>% group_by(Param) %>% summarise(n = length(unique(spp)))
+#   Param     n
+# 1 O       189
+# 2 LE       76
+# 3 TE       38
+
+# N shifts
+nrow(mydatatogo)
+# 4675
+
+# N shifts per Class
+mydatatogo %>% group_by(Class) %>% tally
+#   Class              n
+# 1 Aves             429
+# 2 Actinopterygii   100
+# 3 Magnoliopsida     87
+# 4 Liliopsida         9
+# 5 Pinopsida         22
+# 6 Mammalia           6
+
+# N shifts per range position
+table(mydatatogo$Param)
+#   O  LE  TE 
+# 480 121  52
+
+# N shifts per Class and range position
+mydatatogo %>% group_by(Class, Param) %>% tally
+#            Class Param    n
+#  1 Aves           O       311
+#  2 Aves           LE       93
+#  3 Aves           TE       25
+#  4 Actinopterygii O        87
+#  5 Actinopterygii TE       13
+#  6 Magnoliopsida  O        59
+#  7 Magnoliopsida  LE       14
+#  8 Magnoliopsida  TE       14
+#  9 Liliopsida     O         9
+# 10 Pinopsida      O        14
+# 11 Pinopsida      LE        8
+# 12 Mammalia       LE        6\
+
+table(mydatatogo$ContinuousGrain)
+
+table(mydatatogo$Quality)
+
+table(mydatatogo$PrAb)
+
+table(mydatatogo$Order)
+
+c <- mydatatogo %>%
+  group_by(Class) %>%
+  summarise(`Range shifts` = length(Class),
+            `Species` = length(unique(spp)))
+
+DT::datatable(c,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c), `fontSize` = '80%')
+
+c <- mydatatogo %>%
+  group_by(Class) %>%
+  mutate(Class=factor(Class, levels = sort(unique(as.character(mydatatogo$Class))))) %>%
+  summarise(`Avg. Range shift velocity (SD)` = paste0(round(mean(SHIFT),2), " (", round(sd(SHIFT),2), ")"),
+            `Avg. Genetic diversity (SD)` = paste0(formatC(mean(GD), format = "e", digits=2), " (", formatC(sd(GD), format = "e", digits=1), ")"),
+            `Avg. Climate change velocity (SD)` = paste0(round(mean(vel_abs),2), " (", round(sd(vel_abs),3), ")"))
+
+DT::datatable(c,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c), `fontSize` = '80%')
+
+```
+
+## Histograms
+
+### Per Class
+```{r fig.height=3,fig.width=7}
+
+tmp <- mydatatogo %>%
+  mutate(vel_abs=log1p(vel_abs),
+         SHIFT_abs=log1p(SHIFT_abs)) %>%
+  select(Class,GD,vel_abs,SHIFT_abs) %>%
+  gather(variable, value, -Class)
+
+avg_gd <- tmp %>%
+  filter(variable=="GD") %>%
+  group_by(Class) %>%
+  dplyr::summarise(avg=median(value))
+
+ggplot(mydatatogo %>%
+         select(Class,GD,vel_abs,SHIFT_abs) %>%
+         gather(variable, value, -Class) %>%
+         mutate(Class=factor(Class,levels = avg_gd$Class[order(avg_gd$avg)])), 
+       aes(value))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = "")+
+  facet_wrap(.~variable, scales = "free", ncol = 3)
+
+p1 <- ggplot(mydatatogo, aes(SHIFT_abs))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = bquote('Absolute velocity of range shift '(km.yr^1)))
+
+p2 <- ggplot(mydatatogo, aes(GD))+
+  geom_density(aes(fill=Class),alpha=.5)+
+  scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = "Genetic diversity")
+
+p3 <- ggplot(mydatatogo, aes(vel_abs))+
+  # geom_histogram(binwidth = .5,aes(fill=Class),alpha=.5) +
+  geom_density(aes(fill=Class),alpha=.5) +
+  # scale_x_log10()+
+  theme_classic() +
+  labs(y = "", x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)))
+
+```
+
+### Shift
+
+```{r message=FALSE, warning=FALSE}
+
+hist(mydatatogo$SHIFT_abs)
+hist(mydatatogo$SHIFT_abs_log)
+
+```
+
+### GD
+
+```{r message=FALSE, warning=FALSE}
+
+hist(mydatatogo$GD)
+hist(mydatatogo$GD_log1p)
+
+### GD vs Class
+ggplot(mydatatogo, aes(GD))+
+  geom_density(aes(fill = Class), color = NA, alpha = .3)+
+  theme_classic() +
+  labs(y = "Density", x = "Genetic diversity (log)")
+
+m <- aov(GD_log1p ~ Class, mydatatogo)
+summary(m)
+tres <- TukeyHSD(m)
+round(tres$Class,3)
+
+```
+
+Genetic diversity differs among classes.
+
+### Velocity
+
+```{r message=FALSE, warning=FALSE}
+
+hist(mydatatogo$vel_abs)
+hist(mydatatogo$vel_abs_log)
+
+```
+
+We should use SHIFT_abs with a Gamma family or SHIFT_abs_log in a gaussian family.
+
+### Distance of GD data and range shift data
+
+```{r message=FALSE, warning=FALSE}
+
+summary(mydatatogo$dist_cent/1000)
+hist(mydatatogo$dist_cent/1000, 
+     main = "Distance from study area centroid", 
+     xlab = "Distance in km")
+
+# summary(mydatatogo$dist_edge/1000)
+# hist(mydatatogo$dist_edge/1000, 
+#      main = "Distance from the range edge of study area", 
+#      xlab = "Distance in km")
+
+```
+
+## Scatter plots
+
+### SHIFT vs Velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=SHIFT_abs))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=SHIFT_abs))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+
+```
+
+### SHIFT vs GD
+
+```{r fig.width=5, fig.height=5, message=FALSE, warning=FALSE}
+
+ggplot(mydatatogo,
+       aes(x=GD, y=SHIFT_abs,color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                           max(mydatatogo$SHIFT_abs_log),
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+
+ggplot(mydatatogo,
+       aes(x=GD, y=SHIFT_abs,color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+
+```
+
+```{r fig.height=7, fig.width=9, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=GD, y=SHIFT_abs, color=vel_abs))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 6),3)))+
+  scale_color_viridis_c(option = "inferno",direction=-1)+
+  geom_point(alpha = .3, size = 3)+
+  theme_classic()+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(Class~., scales = "free")
+
+```
+
+### GD vs Velocity
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=GD))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = "Genetic diversity") +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=GD))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = "Genetic diversity") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Param)
+```
+
+
+## Spatial distribution of data
+
+```{r out.height = "700px", out.width='800px', echo=F, message=FALSE}
+
+options(knitr.graphics.error = FALSE)
+
+pdf_file <- here::here("Figs/Map_pop-level_GD2.pdf")
+pdf_page <- pdf_render_page(pdf_file, page = 1)
+png_file <- here::here("Figs/Map_pop-level_GD2.png")
+png::writePNG(pdf_page, png_file, dpi = 300)
+
+knitr::include_graphics(normalizePath(png_file))
+
+```
+
+## N obs for modeling
+```{r echo=FALSE, fig.height=7, fig.width=8, message=FALSE, warning=FALSE}
+
+p1 <- ggplot(mydatatogo, aes(x=vel_abs, y=SHIFT))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,1),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                           max(mydatatogo$vel_abs_log),
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                           max(mydatatogo$SHIFT_abs_log),
+                           length.out = 6),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "", 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)))
+
+p2 <- ggplot(mydatatogo, aes(x=GD, y=SHIFT))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_x_continuous(n.breaks = 5,
+                     limits=c(0,1), expand=c(0,0))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                           max(mydatatogo$SHIFT_abs_log),
+                           length.out = 6),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = "Genetic diversity", 
+       y = "") 
+
+p3 <- ggplot(mydatatogo, aes(x=vel_abs, y=GD))+
+  geom_hex(bins = 10) +
+  scale_fill_viridis_c(name = "N obs",
+                       labels=function(x) round(x,0))+
+  scale_y_continuous(n.breaks = 5,
+                     limits=c(0,1), expand=c(0,0))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,1),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                           max(mydatatogo$vel_abs_log),
+                           length.out = 5),3)))+
+  theme_classic()+ 
+  theme(aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = "Genetic diversity")
+
+
+(p1+p2+p3) + plot_layout(ncol=2, axis_titles = "collect")
+
+```
+
+
+```{r echo=FALSE, fig.height=7, fig.width=8, message=FALSE, warning=FALSE}
+
+range_position <- c("TE","O","LE")
+range_position_name <- c("Trailing edge", "Centroid", "Leading edge")
+
+range_position_max_TE <- c(25,50,50)
+range_position_max_O <- c(255,420,209)
+range_position_max_LE <- c(299,499,389)
+range_position_max <- rbind(range_position_max_TE,
+                            range_position_max_O,
+                            range_position_max_LE)
+
+comb_plot <- list()
+
+for(i in 1:length(range_position)){
+  
+  p1 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=vel_abs, y=SHIFT))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_x_continuous(
+      trans="log",
+      labels=function(x) round(x,1),
+      breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                             max(mydatatogo$vel_abs_log),
+                             length.out = 5),3)))+
+    scale_y_continuous(
+      trans="log",
+      labels=function(x) round(x,3),
+      breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                             max(mydatatogo$SHIFT_abs_log),
+                             length.out = 6),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = "", 
+         y = bquote('Absolute velocity of range shift '(km.yr^1))) 
+  
+  p2 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=GD, y=SHIFT))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_x_continuous(n.breaks = 5,
+                       limits=c(0,1), expand=c(0,0))+
+    scale_y_continuous(
+      trans="log",
+      labels=function(x) round(x,3),
+      breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log),
+                             max(mydatatogo$SHIFT_abs_log),
+                             length.out = 6),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = "Genetic diversity", 
+         y = "") 
+  
+  p3 <- ggplot(mydatatogo %>%
+                 filter(Param == range_position[i]), aes(x=vel_abs, y=GD))+
+    geom_hex(bins = 10) +
+    scale_fill_viridis_c(name = "N obs",
+                         labels=function(x) round(x,0))+
+    scale_y_continuous(n.breaks = 5,
+                       limits=c(0,1), expand=c(0,0))+
+    scale_x_continuous(
+      trans="log",
+      labels=function(x) round(x,1),
+      breaks = exp(round(seq(min(mydatatogo$vel_abs_log),
+                             max(mydatatogo$vel_abs_log),
+                             length.out = 5),3)))+
+    theme_classic()+ 
+    theme(aspect.ratio=1)+
+    labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+         y = "Genetic diversity")
+  
+  
+  print((p1+p2+p3) + 
+          plot_layout(ncol=2) +  
+          plot_annotation(title = range_position_name[i],
+                          theme = theme(plot.title = element_text(hjust = 0.5, vjust = 10))))
+  
+}
+
+```
+
+
+
+# Statistics
+
+We explore how species range shifts (km/year) (response variable) varies in function of climate change velocity (km/year) and GD (Genetic diversity) using a general linear mixed-effect modelling (GLMM) framework. Our goal is to estimate whereas GD increases (or decreases) species range shift in response to climate change velocity. To account for methodological differences in range shift estimates, we included the methodological variables from BioShifts described above as fixed-effect terms in our models. As our dataset comprises species across multiple taxonomic classes, with different ecology and sensitivity to climate variability, observations are considered as non-independent from each other. Flight capacity would confer birds greater dispersal potential than plants, ectotherms and short lived like insects should be more sensitive to climate variability than endotherms like fishes. We control for taxonomy and ecological variability by including Class as a random-intercept in our model.
+
+We model absolute values for range shifts and climate velocity as we expect GD to impact the magnitude of the coupling between range shifts and climate velocity, not the direction of this relationship. As we are modeling positive values, we fitted our GLMMs using a Gamma family with a log link. In addition to these models, we also fitted Gaussian models using log-transformed values of range shift and climate velocity. Gamma models performed better (in terms of R2 and AIC) than Gaussian models, therefore we discuss results from Gamma models only.
+
+We test whereas the modulating effect of GD varies across the multiple range positions. Different levels of exposure are expected at different positions of a species range, thereby leading to influencing ecological dynamics. At the warm edge species leave closer to their upper thermal tolerance limit and thus should be more sensitive to warming. In contrast, a warming at the cold edge may represent colonization opportunity. Because GD is at the intraspecific scale, a single GD value can be matched to multiple estimates of range shift estimates across different positions of the range for the same species. To avoid false duplicate data, we run separate analyses to the different range positions.
+
+In summary, three models are fitted:
+
+1.  **allW:** a model that considers the whole dataset (the position is accounting for in the model as a fixed and additive effect only due to the imbalance in data among positions) weighting for the imbalance in he number of obs among species (i.e., in the model every species will have the same weight whatever the number of obs)
+
+2.  **CEW, LEW and TEW:** three independent models that model centroid, leading and trailing edges range shifts, respectively. Like in the allW model, observations used by each model are weighted to control for imbalance in he number of obs among species (i.e., in the model every species will have the same weight whatever the number of obs)
+
+Here is the formula for models W:
+$$
+Range Shift = Climate Velocity * Genetic Diversity + RangePosition + Methods + (1|Class)
+$$
+
+3.  **allW2:** differs from allW in two ways:
+(i) the obs are weighted in order to control for the imbalance in both the number of obs among species (i.e., in the model every species will have the same weight whatever the number of obs) and the number of obs among the positions.
+(ii) as imbalance in data is controlled the position is accounted for an additive and interaction effect (with climate velocity and genetic diversity in the model).
+
+Here is the formula for models W2:
+$$
+Range Shift = Climate Velocity * Genetic Diversity * RangePosition + Methods + (1|Class)
+$$
+
+
+We first test if the species range shift varies in function of both climate change velocity, genetic diversity and the interaction between these two variables, while account for methodology and phylogeny.
+
+## Gaussian model
+
+```{r}
+gau_velxGD_edge1 <- as.formula(
+  "SHIFT_abs_log ~ scale(vel_abs_log) * scale(GD) + Param + 
+    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
+    (1 | Class)")
+
+gau_velxGD_edge2 <- as.formula(
+  "SHIFT_abs_log ~ scale(vel_abs_log) * scale(GD) + Param + 
+    (1 | Class + NtempUnitsF + ExtentF + ContinuousGrain + PrAb + Quality)")
+```
+
+
+
+```{r}
+
+# Model with zero GD + fixed-effect methods
+gau1_allW <- glmmTMB(gau_velxGD_edge1, 
+                     weights = weight_obs_spp,
+                     data = mydatatogo)
+summary(gau1_allW)
+round(MuMIn::r.squaredGLMM(gau1_allW),2)
+AIC(gau1_allW)
+performance::check_collinearity(gau1_allW)
+
+# Model without zero GD + fixed-effect methods
+gau2_allW <- glmmTMB(gau_velxGD_edge1, 
+                     weights = weight_obs_spp,
+                     data = mydatatogo %>% 
+                       filter_all(all_vars(!is.infinite(.))))
+summary(gau2_allW)
+round(MuMIn::r.squaredGLMM(gau2_allW),2)
+AIC(gau2_allW)
+performance::check_collinearity(gau2_allW)
+
+```
+
+```{r}
+# Model with zero GD + random-effect methods
+gau3_allW <- glmmTMB(gau_velxGD_edge2, 
+                     weights = weight_obs_spp,
+                     data = mydatatogo)
+summary(gau3_allW)
+round(MuMIn::r.squaredGLMM(gau3_allW),2)
+AIC(gau3_allW)
+performance::check_collinearity(gau3_allW)
+
+# Model without zero GD + random-effect methods
+gau4_allW <- glmmTMB(gau_velxGD_edge2, 
+                     weights = weight_obs_spp,
+                     data = mydatatogo %>%
+                       filter_all(all_vars(!is.infinite(.))))
+summary(gau4_allW)
+round(MuMIn::r.squaredGLMM(gau4_allW),2)
+AIC(gau4_allW)
+performance::check_collinearity(gau4_allW)
+
+```
+
+## Gamma model
+
+```{r}
+
+gam_velxGD_edge1 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) + Param +
+    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
+    (1 | Class)")
+
+gam_velxGD_edge2 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) + Param +
+    (1 | Class + NtempUnitsF + ExtentF + ContinuousGrain + PrAb + Quality)")
+
+gam_velxGDxedge1 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
+    (1 | Class)")
+
+gam_velxGDxedge2 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param +
+    (1 | Class + NtempUnitsF + ExtentF + ContinuousGrain + PrAb + Quality)")
+
+gam_velxGD1 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) +
+    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
+    (1 | Class)")
+
+gam_velxGD2 <- as.formula(
+  "SHIFT_abs ~ scale(vel_abs) * scale(GD) +
+    (1 | Class + NtempUnitsF + ExtentF + ContinuousGrain + PrAb + Quality)")
+
+```
+
+```{r}
+# Model with zero GD + fixed-effect methods
+gam1_allW <- glmmTMB(gam_velxGD_edge1, 
+                     weights = weight_obs_spp,
+                     family = Gamma(link = "log"),
+                     data = mydatatogo)
+summary(gam1_allW)
+round(MuMIn::r.squaredGLMM(gam1_allW),2)
+AIC(gam1_allW)
+performance::check_collinearity(gam1_allW)
+
+# Model without zero GD + fixed-effect methods
+gam2_allW <- glmmTMB(gam_velxGD_edge1, 
+                     weights = weight_obs_spp,
+                     family = Gamma(link = "log"),
+                     data = mydatatogo %>%
+                       filter_all(all_vars(!is.infinite(.))))
+summary(gam2_allW)
+round(MuMIn::r.squaredGLMM(gam2_allW),2)
+AIC(gam2_allW)
+performance::check_collinearity(gam2_allW)
+
+```
+
+
+```{r}
+# Model with zero GD + random-effect methods
+gam3_allW <- glmmTMB(gam_velxGD_edge2, 
+                     weights = weight_obs_spp,
+                     family = Gamma(link = "log"),
+                     data = mydatatogo)
+summary(gam3_allW)
+round(MuMIn::r.squaredGLMM(gam3_allW),2)
+AIC(gam3_allW)
+performance::check_collinearity(gam3_allW)
+
+# Model without zero GD + random-effect methods
+gam4_allW <- glmmTMB(gam_velxGD_edge2, 
+                     weights = weight_obs_spp,
+                     family = Gamma(link = "log"),
+                     data = mydatatogo %>%
+                       filter_all(all_vars(!is.infinite(.))))
+summary(gam4_allW)
+round(MuMIn::r.squaredGLMM(gam4_allW),2)
+AIC(gam4_allW)
+performance::check_collinearity(gam4_allW)
+
+```
+
+
+## Summary
+```{r}
+
+gau_models <- list(gau1_allW,gau2_allW,gau3_allW,gau4_allW)
+gam_models_R2 <- sapply(gau_models, function(x) round(MuMIn::r.squaredGLMM(x),2))
+
+results_gau <- data.frame(model = c("gau1_allW","gau2_allW","gau3_allW","gau4_allW"),
+                          formula = c("gau_velxGD_edge1", "gau_velxGD_edge1", "gau_velxGD_edge2", "gau_velxGD_edge2"),
+                          GD = rep(c("with zeros","without zeros")),
+                          R2m = gam_models_R2[1,],
+                          R2c = gam_models_R2[2,],
+                          AIC = round(sapply(gau_models,AIC),1))
+
+DT::datatable(results_gau,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(results_gau), `fontSize` = '80%')
+
+
+
+gam_models <- list(gam1_allW=gam1_allW,gam2_allW=gam2_allW,gam3_allW=gam3_allW,gam4_allW=gam4_allW)
+gam_models_R2 <- sapply(gam_models, function(x) round(MuMIn::r.squaredGLMM(x),2))
+
+results_gam <- data.frame(model = c("gam1_allW","gam2_allW","gam3_allW","gam4_allW"),
+                          formula = c("gam_velxGD_edge1", "gam_velxGD_edge1", "gam_velxGD_edge2", "gam_velxGD_edge2"),
+                          GD = rep(c("with zeros","without zeros")),
+                          R2m_delta = gam_models_R2[1,],
+                          R2m_lognormal = gam_models_R2[2,],
+                          R2m_trigamma = gam_models_R2[3,],
+                          R2c_delta = gam_models_R2[4,],
+                          R2c_lognormal = gam_models_R2[5,],
+                          R2c_trigamma = gam_models_R2[6,],
+                          AIC = round(sapply(gam_models,AIC),1))
+
+DT::datatable(results_gam,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(results_gam), `fontSize` = '80%')
+
+
+```
+
+## Bootstrap models
+
+```{r eval=FALSE}
+# Global parameters
+no=2 # CPUs saved -- not used for parallel computing
+nCPU=parallel::detectCores()-no # CPUs for parallel computing
+s1=10 # the seed to make reproducible random stuff
+nB=5000 # the number of bootstrap
+#bootstrap test: H0= coefficient equal to 0; H1= coefficient higher than 0
+test1=function(x,mu=0){
+  return(1-(length(x[x>mu])/length(x)))
+}
+#bootstrap test: H0= coefficient equal to 0; H1= coefficient lower than 0
+test2=function(x,mu=0){
+  return(1-(length(x[x<mu])/length(x)))
+}
+```
+
+### allW
+
+```{r eval=FALSE}
+
+my.cluster2 <- parallel::makeCluster(
+  nCPU, 
+  type = "PSOCK"
+)
+
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo","gam_velxGD_edge1","ranef"))
+
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+  gc(reset=T)
+  print(i)
+  set.seed(s1+i)
+  n1=sample(1:nrow(mydatatogo),rep=T,size=nrow(mydatatogo))
+  mydatatogo2=mydatatogo[n1,]
+  
+  x1=data.frame(table(mydatatogo2$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogo2=merge(mydatatogo2[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  gamX1 <- glmmTMB(gam_velxGD_edge1, 
+                   family = Gamma(link = "log"),
+                   weights = weight_obs_spp,
+                   data = mydatatogo2)
+  
+  r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+  r2=data.frame(r2m=r2[1,1],
+                r2c=r2[1,2],
+                moy_GD=mean(mydatatogo2$GD), 
+                sd_GD=sd(mydatatogo2$GD),
+                moy_VC=mean(mydatatogo2$vel_abs), 
+                sd_VC=sd(mydatatogo2$vel_abs),
+                nB=i)
+  
+  coeff=data.frame(summary(gamX1)$coeff$cond,
+                   var=row.names(summary(gamX1)$coeff$cond),
+                   nB=i)
+  
+  randEff=as.data.frame(ranef(gamX1,condVar=T))
+  randEff$nB=i
+  
+  return(list(r2,coeff,randEff))
+  
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="allW"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+write.table(r2,
+            here::here("Output_pop-level",paste0("R2_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            here::here("Output_pop-level",paste0("coeff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(randEff,here::here("Output_pop-level",paste0("randEff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+
+```
+
+### allW2
+
+```{r eval=FALSE}
+
+my.cluster2 <- parallel::makeCluster(
+  nCPU, 
+  type = "PSOCK"
+)
+
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo","gam_velxGDxedge1","ranef"))
+
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+  gc(reset=T)
+  print(i)
+  set.seed(s1+i)
+  
+  n1=sample(1:nrow(mydatatogo),rep=T,size=nrow(mydatatogo))
+  mydatatogo2=mydatatogo[n1,]
+  mydatatogoCE=subset(mydatatogo2,Param=="O")
+  x1=data.frame(table(mydatatogoCE$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogoCE=merge(mydatatogoCE[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  mydatatogoLE=subset(mydatatogo2,Param=="LE")
+  x1=data.frame(table(mydatatogoLE$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogoLE=merge(mydatatogoLE[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  mydatatogoTE=subset(mydatatogo2,Param=="TE")
+  x1=data.frame(table(mydatatogoTE$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogoTE=merge(mydatatogoTE[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
+  mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
+  mydatatogoLE$weight_obs_spp=mydatatogoLE$weight_obs_spp*(1/3)
+  
+  mydatatogo2=rbind(mydatatogoTE,mydatatogoCE,mydatatogoLE)
+  
+  gamX1 <- glmmTMB(gam_velxGDxedge1, 
+                   family = Gamma(link = "log"),
+                   weights = weight_obs_spp,
+                   data = mydatatogo2)
+  
+  r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+  r2=data.frame(r2m=r2[1,1],
+                r2c=r2[1,2],
+                moy_GD=mean(mydatatogo2$GD), 
+                sd_GD=sd(mydatatogo2$GD),
+                moy_VC=mean(mydatatogo2$vel_abs), 
+                sd_VC=sd(mydatatogo2$vel_abs),
+                nB=i)
+  
+  coeff=data.frame(summary(gamX1)$coeff$cond,
+                   var=row.names(summary(gamX1)$coeff$cond),
+                   nB=i)
+  
+  randEff=as.data.frame(ranef(gamX1,condVar=T))
+  randEff$nB=i
+  
+  return(list(r2,coeff,randEff))
+  
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="allW2"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+write.table(r2,
+            here::here("Output_pop-level",paste0("R2_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            here::here("Output_pop-level",paste0("coeff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(randEff,here::here("Output_pop-level",paste0("randEff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+```
+
+### LEW
+
+```{r eval=FALSE}
+
+mydatatogoS=subset(mydatatogo,Param=="LE")
+x1=data.frame(table(mydatatogoS$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoS=merge(mydatatogoS[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+
+my.cluster2 <- parallel::makeCluster(
+  nCPU, 
+  type = "PSOCK"
+)
+
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
+
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+  gc(reset=T)
+  print(i)
+  set.seed(s1+i)
+  n1=sample(1:nrow(mydatatogoS),rep=T,size=nrow(mydatatogoS))
+  mydatatogo2=mydatatogoS[n1,]
+  
+  x1=data.frame(table(mydatatogo2$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogo2=merge(mydatatogo2[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  gamX1 <- glmmTMB(gam_velxGD1, 
+                   family = Gamma(link = "log"),
+                   weights = weight_obs_spp,
+                   data = mydatatogo2)
+  
+  r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+  r2=data.frame(r2m=r2[1,1],
+                r2c=r2[1,2],
+                moy_GD=mean(mydatatogo2$GD), 
+                sd_GD=sd(mydatatogo2$GD),
+                moy_VC=mean(mydatatogo2$vel_abs), 
+                sd_VC=sd(mydatatogo2$vel_abs),
+                nB=i)
+  
+  coeff=data.frame(summary(gamX1)$coeff$cond,
+                   var=row.names(summary(gamX1)$coeff$cond),
+                   nB=i)
+  
+  randEff=as.data.frame(ranef(gamX1,condVar=T))
+  randEff$nB=i
+  
+  return(list(r2,coeff,randEff))
+  
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="LEW"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+write.table(r2,
+            here::here("Output_pop-level",paste0("R2_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            here::here("Output_pop-level",paste0("coeff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(randEff,here::here("Output_pop-level",paste0("randEff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+```
+
+### TEW
+
+```{r eval=FALSE}
+
+mydatatogoS=subset(mydatatogo,Param=="TE")
+x1=data.frame(table(mydatatogoS$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoS=merge(mydatatogoS[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+
+my.cluster2 <- parallel::makeCluster(
+  nCPU, 
+  type = "PSOCK"
+)
+
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
+
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+  gc(reset=T)
+  print(i)
+  set.seed(s1+i)
+  n1=sample(1:nrow(mydatatogoS),rep=T,size=nrow(mydatatogoS))
+  mydatatogo2=mydatatogoS[n1,]
+  
+  x1=data.frame(table(mydatatogo2$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogo2=merge(mydatatogo2[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  gamX1 <- glmmTMB(gam_velxGD1, 
+                   family = Gamma(link = "log"),
+                   weights = weight_obs_spp,
+                   data = mydatatogo2)
+  
+  r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+  r2=data.frame(r2m=r2[1,1],
+                r2c=r2[1,2],
+                moy_GD=mean(mydatatogo2$GD), 
+                sd_GD=sd(mydatatogo2$GD),
+                moy_VC=mean(mydatatogo2$vel_abs), 
+                sd_VC=sd(mydatatogo2$vel_abs),
+                nB=i)
+  
+  coeff=data.frame(summary(gamX1)$coeff$cond,
+                   var=row.names(summary(gamX1)$coeff$cond),
+                   nB=i)
+  
+  randEff=as.data.frame(ranef(gamX1,condVar=T))
+  randEff$nB=i
+  
+  return(list(r2,coeff,randEff))
+  
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="TEW"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+write.table(r2,
+            here::here("Output_pop-level",paste0("R2_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            here::here("Output_pop-level",paste0("coeff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(randEff,here::here("Output_pop-level",paste0("randEff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+```
+
+### CEW
+
+```{r eval=FALSE}
+
+mydatatogoS=subset(mydatatogo,Param=="O")
+x1=data.frame(table(mydatatogoS$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoS=merge(mydatatogoS[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+
+my.cluster2 <- parallel::makeCluster(
+  nCPU, 
+  type = "PSOCK"
+)
+
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogoS","gam_velxGD1","ranef"))
+
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+  gc(reset=T)
+  print(i)
+  set.seed(s1+i)
+  n1=sample(1:nrow(mydatatogoS),rep=T,size=nrow(mydatatogoS))
+  mydatatogo2=mydatatogoS[n1,]
+  
+  x1=data.frame(table(mydatatogo2$spp))
+  x1=subset(x1,Freq>0)
+  x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+  mydatatogo2=merge(mydatatogo2[,1:43],x1[,c(1,3)],by.x="spp",by.y="Var1")
+  
+  gamX1 <- glmmTMB(gam_velxGD1, 
+                   family = Gamma(link = "log"),
+                   weights = weight_obs_spp,
+                   data = mydatatogo2)
+  
+  r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+  r2=data.frame(r2m=r2[1,1],
+                r2c=r2[1,2],
+                moy_GD=mean(mydatatogo2$GD), 
+                sd_GD=sd(mydatatogo2$GD),
+                moy_VC=mean(mydatatogo2$vel_abs), 
+                sd_VC=sd(mydatatogo2$vel_abs),
+                nB=i)
+  
+  coeff=data.frame(summary(gamX1)$coeff$cond,
+                   var=row.names(summary(gamX1)$coeff$cond),
+                   nB=i)
+  
+  randEff=as.data.frame(ranef(gamX1,condVar=T))
+  randEff$nB=i
+  
+  return(list(r2,coeff,randEff))
+  
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="CEW"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+write.table(r2,
+            here::here("Output_pop-level",paste0("R2_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            here::here("Output_pop-level",paste0("coeff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+write.table(randEff,here::here("Output_pop-level",paste0("randEff_",nom,".csv")),
+            sep=";",dec=".",row=F)
+```
+
+
+## Collect data
+```{r eval=FALSE}
+
+resR2_ok_file <- here::here("Output_pop-level","summary_R2.csv")
+res_ok_file <- here::here("Output_pop-level","summary_coeff.csv")
+
+if(all(file.exists(resR2_ok_file,res_ok_file))){
+  
+  resR2_ok_file <- read.table(resR2_ok_file, sep=";", dec=".")
+  res_ok_file <- read.table(res_ok_file, sep=";", dec=".")
+  
+} else {
+  
+  mod=c("allW","CEW","TEW","LEW","allW2")
+  
+  a=1
+  s1=10 #the seed to make reproducible random staff
+  
+  
+  
+  for(i in 1:length(mod)){
+    print(a)
+    r2=read.csv2(here::here("Output_pop-level",paste0("R2_",mod[i],".csv")),
+                 sep=";",dec=".")
+    #r2$nB=1:nrow(r2)
+    r2a=subset(r2,is.na(r2m)==F)
+    print(paste(mod[i],': ',nrow(r2a),sep=""))
+    if(nrow(r2a)>=nB){ #random selection of nB bootstrap model (criteria: model convergence)
+      set.seed(s1)
+      r2a=r2a[sample(1:nrow(r2a),size=nB,replace=F),]
+    }
+    if(nrow(r2a)<nB){
+      print(paste0("sampling size is less than ",nB," bootstraps"))
+    }else{
+      resR2=data.frame(type="r2m",moy=mean(r2a$r2m),sd=sd(r2a$r2m),median=median(r2a$r2m),q025=quantile(r2a$r2m,probs=0.025),q975=quantile(r2a$r2m,probs=0.975))
+      resR2=rbind(resR2,data.frame(type="r2c",moy=mean(r2a$r2c),sd=sd(r2a$r2c),median=median(r2a$r2c),q025=quantile(r2a$r2c,probs=0.025),q975=quantile(r2a$r2c,probs=0.975)))
+      #resR2$n_sing=nrow(subset(r2a,sing==T))
+      resR2$model=mod[i]
+      
+      c1=read.csv2(here::here("Output_pop-level",paste("coeff_",mod[i],".csv",sep="")),
+                   sep=";",dec=".",h=T)
+      #c1$nB=rep(1:nrow(r2),each=nrow(c1)/6000)
+      c1=merge(c1,data.frame(nB=r2a$nB),by.x="nB",by.y="nB")
+      rr3=c1
+      
+      res=data.frame(var=names(tapply(rr3$Estimate,rr3$var,mean)),moy=tapply(rr3$Estimate,rr3$var,mean),sd=tapply(rr3$Estimate,rr3$var,sd),median=tapply(rr3$Estimate,rr3$var,median),q025=tapply(rr3$Estimate,rr3$var,quantile,probs=0.025),
+                     p975=tapply(rr3$Estimate,rr3$var,quantile,probs=0.975), pv.inf0=tapply(rr3$Estimate,rr3$var,test2,mu=0),pv.sup0=tapply(rr3$Estimate,rr3$var,test1,mu=0))
+      res$model=mod[i]
+      if(a==1){
+        resR2_ok=resR2
+        res_ok=res
+      }
+      else{
+        resR2_ok=rbind(resR2_ok,resR2)
+        res_ok=rbind(res_ok,res)
+      }
+      
+      a=a+1
+    }
+  }
+  
+  write.table(resR2_ok,
+              here::here("Output_pop-level","summary_R2.csv"),
+              sep=";",dec=".",row=F) 
+  
+  #R2 statistic computed from 5000 boostrap model:
+  #type= R2 type (r2m= marginal R2; r2c= conditional R2)
+  #moy= mean R2 value
+  #sd= R2 standard deviation value
+  #median= median R2 value
+  #q025= 2.5% quantile of the bootstrap distribution
+  #q975= 97.5% quantile of the bootstrap distribution
+  #n_sing= number of singular model
+  #model= model name abbreviation
+  
+  write.table(res_ok,
+              here::here("Output_pop-level","summary_coeff.csv"),
+              sep=";",dec=".",row=F) 
+  #coefficient statistics
+  #Var =  Term of the model
+  #moy = mean effect computed from the 5000 bootstrap model
+  #sd = standard deviation computed from the 5000 bootstrap model
+  #med = median effect computed from the 5000 bootstrap model
+  #q025 = 2.5% quantile of the bootstrap coefficient distribution
+  #q975 = 97.5% quantile of the bootstrap coefficient distribution
+  #pv.sup0 = p-value of the bootstrap test testing the significance of the effect (H0= coefficient equal to 0; H1= coefficient greater than 0)
+  #pv.inf0 = p-value of the bootstrap test testing the significance of the effect (H0= coefficient equal to 0; H1= coefficient lower than 0)
+  #model= model name abbreviation
+  
+  # #significant positive effect
+  # subset(res_ok,model=="allW" & pv.sup0<0.05)
+  # subset(res_ok,model=="CEW" & pv.sup0<0.05)
+  # subset(res_ok,model=="LEW" & pv.sup0<0.05)
+  # subset(res_ok,model=="TEW" & pv.sup0<0.05)
+  # subset(res_ok,model=="allW2" & pv.sup0<0.05)
+  # 
+  # #significant negative effect
+  # subset(res_ok,model=="allW" & pv.inf0<0.05)
+  # subset(res_ok,model=="CEW" & pv.inf0<0.05)
+  # subset(res_ok,model=="LEW" & pv.inf0<0.05)
+  # subset(res_ok,model=="TEW" & pv.inf0<0.05)
+  # subset(res_ok,model=="allW2" & pv.inf0<0.05)
+  # 
+  # #non-significant negative effect
+  # subset(res_ok,model=="allW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+  # subset(res_ok,model=="CEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+  # subset(res_ok,model=="LEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+  # subset(res_ok,model=="TEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+  # subset(res_ok,model=="allW2" & pv.inf0>=0.05 & pv.sup0>=0.05)
+}
+
+```
+
+
+### Test climate velocity value for which GD is significant
+
+#### allW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_GDeff_allW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_allW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=mydatatogo
+  v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  #register cluster
+  doParallel::registerDoParallel(cl = my.cluster2)
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp=data.frame(vel_abs=v1,GDeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(vel_abs=names(tapply(ex$GDeff,ex$vel_abs,mean)),
+                 moy=tapply(ex$GDeff,ex$vel_abs,mean),
+                 sd=tapply(ex$GDeff,ex$vel_abs,sd),
+                 median=tapply(ex$GDeff,ex$vel_abs,median),
+                 q025=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.025),
+                 p975=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$GDeff,ex$vel_abs,test2,mu=0),
+                 pv.sup0=tapply(ex$GDeff,ex$vel_abs,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_GDeff_allW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### CEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_GDeff_CEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_CEW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="O")
+  v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  #register cluster
+  doParallel::registerDoParallel(cl = my.cluster2)
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp=data.frame(vel_abs=v1,GDeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(vel_abs=names(tapply(ex$GDeff,ex$vel_abs,mean)),
+                 moy=tapply(ex$GDeff,ex$vel_abs,mean),
+                 sd=tapply(ex$GDeff,ex$vel_abs,sd),
+                 median=tapply(ex$GDeff,ex$vel_abs,median),
+                 q025=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.025),
+                 p975=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$GDeff,ex$vel_abs,test2,mu=0),
+                 pv.sup0=tapply(ex$GDeff,ex$vel_abs,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_GDeff_CEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### LEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_GDeff_LEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_LEW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="LE")
+  v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  #register cluster
+  doParallel::registerDoParallel(cl = my.cluster2)
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp=data.frame(vel_abs=v1,GDeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(vel_abs=names(tapply(ex$GDeff,ex$vel_abs,mean)),
+                 moy=tapply(ex$GDeff,ex$vel_abs,mean),
+                 sd=tapply(ex$GDeff,ex$vel_abs,sd),
+                 median=tapply(ex$GDeff,ex$vel_abs,median),
+                 q025=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.025),
+                 p975=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$GDeff,ex$vel_abs,test2,mu=0),
+                 pv.sup0=tapply(ex$GDeff,ex$vel_abs,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_GDeff_LEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### TEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_GDeff_TEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_TEW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="TE")
+  v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  #register cluster
+  doParallel::registerDoParallel(cl = my.cluster2)
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp=data.frame(vel_abs=v1,GDeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(vel_abs=names(tapply(ex$GDeff,ex$vel_abs,mean)),
+                 moy=tapply(ex$GDeff,ex$vel_abs,mean),
+                 sd=tapply(ex$GDeff,ex$vel_abs,sd),
+                 median=tapply(ex$GDeff,ex$vel_abs,median),
+                 q025=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.025),
+                 p975=tapply(ex$GDeff,ex$vel_abs,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$GDeff,ex$vel_abs,test2,mu=0),
+                 pv.sup0=tapply(ex$GDeff,ex$vel_abs,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_GDeff_TEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### allW2 model
+
+```{r eval=FALSE}
+
+resTE <- here::here("Output_pop-level","summary_GDeff_allW2_TE.csv")
+resCE <- here::here("Output_pop-level","summary_GDeff_allW2_CE.csv")
+resLE <- here::here("Output_pop-level","summary_GDeff_allW2_LE.csv")
+
+if(!all(file.exists(resTE,resCE,resLE))){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_allW2.csv"),
+               sep=";",dec=".",h=T)
+  dsel=mydatatogo
+  v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  #register cluster
+  doParallel::registerDoParallel(cl = my.cluster2)
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp=data.frame(vel_abs=v1,GDeff_CE=eff)
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp$GDeff_LE=eff
+    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    tmp$GDeff_TE=eff
+    tmp$nB=i
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  #summary statistics
+  resCE=data.frame(vel_abs=names(tapply(ex$GDeff_CE,ex$vel_abs,mean)),
+                   moy=tapply(ex$GDeff_CE,ex$vel_abs,mean),
+                   sd=tapply(ex$GDeff_CE,ex$vel_abs,sd),
+                   median=tapply(ex$GDeff_CE,ex$vel_abs,median),
+                   q025=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.025),
+                   p975=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.975), 
+                   pv.inf0=tapply(ex$GDeff_CE,ex$vel_abs,test2,mu=0),
+                   pv.sup0=tapply(ex$GDeff_CE,ex$vel_abs,test1,mu=0))
+  
+  resLE=data.frame(vel_abs=names(tapply(ex$GDeff_LE,ex$vel_abs,mean)),
+                   moy=tapply(ex$GDeff_LE,ex$vel_abs,mean),
+                   sd=tapply(ex$GDeff_LE,ex$vel_abs,sd),
+                   median=tapply(ex$GDeff_LE,ex$vel_abs,median),
+                   q025=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.025),
+                   p975=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.975),
+                   pv.inf0=tapply(ex$GDeff_LE,ex$vel_abs,test2,mu=0),
+                   pv.sup0=tapply(ex$GDeff_LE,ex$vel_abs,test1,mu=0))
+  
+  resTE=data.frame(vel_abs=names(tapply(ex$GDeff_TE,ex$vel_abs,mean)),
+                   moy=tapply(ex$GDeff_TE,ex$vel_abs,mean),
+                   sd=tapply(ex$GDeff_TE,ex$vel_abs,sd),
+                   median=tapply(ex$GDeff_TE,ex$vel_abs,median),
+                   q025=tapply(ex$GDeff_TE,ex$vel_abs,quantile,probs=0.025),
+                   p975=tapply(ex$GDeff_TE,ex$vel_abs,quantile,probs=0.975),
+                   pv.inf0=tapply(ex$GDeff_TE,ex$vel_abs,test2,mu=0),
+                   pv.sup0=tapply(ex$GDeff_TE,ex$vel_abs,test1,mu=0))
+  
+  
+  write.table(resTE,
+              here::here("Output_pop-level","summary_GDeff_allW2_TE.csv"),
+              sep=";",dec=".",row=F) 
+  write.table(resCE,
+              here::here("Output_pop-level","summary_GDeff_allW2_CE.csv"),
+              sep=";",dec=".",row=F) 
+  write.table(resLE,
+              here::here("Output_pop-level","summary_GDeff_allW2_LE.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(resCE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resCE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+  
+  # #significant positive effect
+  # subset(resLE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resLE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+  
+  # #significant positive effect
+  # subset(resTE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resTE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resTE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+### Test GD value for which the climate velocity effect is significant
+
+#### allW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_VAeff_allW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_allW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=mydatatogo
+  v1=seq(round(min(dsel$GD),2),round(max(dsel$GD),2),by=0.01)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp=data.frame(GD=v1,VAeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  
+  res=data.frame(GD=names(tapply(ex$VAeff,ex$GD,mean)),
+                 moy=tapply(ex$VAeff,ex$GD,mean),
+                 sd=tapply(ex$VAeff,ex$GD,sd),
+                 median=tapply(ex$VAeff,ex$GD,median),
+                 q025=tapply(ex$VAeff,ex$GD,quantile,probs=0.025),
+                 p975=tapply(ex$VAeff,ex$GD,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$VAeff,ex$GD,test2,mu=0),
+                 pv.sup0=tapply(ex$VAeff,ex$GD,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_VAeff_allW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### CEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_VAeff_CEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_CEW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="O")
+  v1=seq(round(min(dsel$GD),2),round(max(dsel$GD),2),by=0.01)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp=data.frame(GD=v1,VAeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(GD=names(tapply(ex$VAeff,ex$GD,mean)),
+                 moy=tapply(ex$VAeff,ex$GD,mean),
+                 sd=tapply(ex$VAeff,ex$GD,sd),
+                 median=tapply(ex$VAeff,ex$GD,median),
+                 q025=tapply(ex$VAeff,ex$GD,quantile,probs=0.025),
+                 p975=tapply(ex$VAeff,ex$GD,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$VAeff,ex$GD,test2,mu=0),
+                 pv.sup0=tapply(ex$VAeff,ex$GD,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_VAeff_CEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### LEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_VAeff_LEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_LEW.csv"),
+               sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="LE")
+  v1=seq(round(min(dsel$GD),2),round(max(dsel$GD),2),by=0.01)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp=data.frame(GD=v1,VAeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(GD=names(tapply(ex$VAeff,ex$GD,mean)),
+                 moy=tapply(ex$VAeff,ex$GD,mean),
+                 sd=tapply(ex$VAeff,ex$GD,sd),
+                 median=tapply(ex$VAeff,ex$GD,median),
+                 q025=tapply(ex$VAeff,ex$GD,quantile,probs=0.025),
+                 p975=tapply(ex$VAeff,ex$GD,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$VAeff,ex$GD,test2,mu=0),
+                 pv.sup0=tapply(ex$VAeff,ex$GD,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_VAeff_LEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### TEW model
+
+```{r eval=FALSE}
+res <- here::here("Output_pop-level","summary_VAeff_TEW.csv")
+
+if(!file.exists(res)){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_TEW.csv"),sep=";",dec=".",h=T)
+  dsel=subset(mydatatogo,Param=="TE")
+  v1=seq(round(min(dsel$GD),2),round(max(dsel$GD),2),by=0.01)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp=data.frame(GD=v1,VAeff=eff,nB=i)
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  res=data.frame(GD=names(tapply(ex$VAeff,ex$GD,mean)),
+                 moy=tapply(ex$VAeff,ex$GD,mean),
+                 sd=tapply(ex$VAeff,ex$GD,sd),
+                 median=tapply(ex$VAeff,ex$GD,median),
+                 q025=tapply(ex$VAeff,ex$GD,quantile,probs=0.025),
+                 p975=tapply(ex$VAeff,ex$GD,quantile,probs=0.975),
+                 pv.inf0=tapply(ex$VAeff,ex$GD,test2,mu=0),
+                 pv.sup0=tapply(ex$VAeff,ex$GD,test1,mu=0))
+  
+  write.table(res,
+              here::here("Output_pop-level","summary_VAeff_TEW.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(res,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(res,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(res,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+#### allW2 model
+
+```{r eval=FALSE}
+resTE <- here::here("Output_pop-level","summary_VAeff_allW2_TE.csv")
+resCE <- here::here("Output_pop-level","summary_VAeff_allW2_CE.csv")
+resLE <- here::here("Output_pop-level","summary_VAeff_allW2_LE.csv")
+
+if(!all(file.exists(resTE,resCE,resLE))){
+  
+  c1=read.csv2(here::here("Output_pop-level","coeff_allW2.csv"),sep=";",dec=".",h=T)
+  dsel=mydatatogo
+  v1=seq(round(min(dsel$GD),3),round(max(dsel$GD),3),by=0.001)
+  
+  my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+  )
+  
+  clusterExport(cl = my.cluster2, varlist = c("c1","dsel","v1","test1","test2"))
+  
+  ex=pblapply(1:nB,function(i){
+    gc(reset=T)
+    print(i)
+    c1a=subset(c1,nB==i)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp=data.frame(GD=v1,VAeff_CE=eff)
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp$VAeff_LE=eff
+    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    tmp$VAeff_TE=eff
+    tmp$nB=i
+    return(tmp)
+  }, cl = my.cluster2)
+  
+  parallel::stopCluster(cl = my.cluster2)
+  
+  ex <- do.call("rbind",ex)
+  
+  #summary statistictics
+  resCE=data.frame(GD=names(tapply(ex$VAeff_CE,ex$GD,mean)),
+                   moy=tapply(ex$VAeff_CE,ex$GD,mean),
+                   sd=tapply(ex$VAeff_CE,ex$GD,sd),
+                   median=tapply(ex$VAeff_CE,ex$GD,median),
+                   q025=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.025),
+                   p975=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.975),
+                   pv.inf0=tapply(ex$VAeff_CE,ex$GD,test2,mu=0),
+                   pv.sup0=tapply(ex$VAeff_CE,ex$GD,test1,mu=0))
+  
+  resLE=data.frame(GD=names(tapply(ex$VAeff_LE,ex$GD,mean)),
+                   moy=tapply(ex$VAeff_LE,ex$GD,mean),
+                   sd=tapply(ex$VAeff_LE,ex$GD,sd),
+                   median=tapply(ex$VAeff_LE,ex$GD,median),
+                   q025=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.025),
+                   p975=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.975),
+                   pv.inf0=tapply(ex$VAeff_LE,ex$GD,test2,mu=0),
+                   pv.sup0=tapply(ex$VAeff_LE,ex$GD,test1,mu=0))
+  
+  resTE=data.frame(GD=names(tapply(ex$VAeff_TE,ex$GD,mean)),
+                   moy=tapply(ex$VAeff_TE,ex$GD,mean),
+                   sd=tapply(ex$VAeff_TE,ex$GD,sd),
+                   median=tapply(ex$VAeff_TE,ex$GD,median),
+                   q025=tapply(ex$VAeff_TE,ex$GD,quantile,probs=0.025),
+                   p975=tapply(ex$VAeff_TE,ex$GD,quantile,probs=0.975),
+                   pv.inf0=tapply(ex$VAeff_TE,ex$GD,test2,mu=0),
+                   pv.sup0=tapply(ex$VAeff_TE,ex$GD,test1,mu=0))
+  
+  write.table(resTE,
+              here::here("Output_pop-level","summary_VAeff_allW2_TE.csv"),
+              sep=";",dec=".",row=F) 
+  write.table(resLE,
+              here::here("Output_pop-level","summary_VAeff_allW2_LE.csv"),
+              sep=";",dec=".",row=F) 
+  write.table(resCE,
+              here::here("Output_pop-level","summary_VAeff_allW2_CE.csv"),
+              sep=";",dec=".",row=F) 
+  
+  # #significant positive effect
+  # subset(resCE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resCE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+  
+  # #significant positive effect
+  # subset(resLE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resLE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+  
+  # #significant positive effect
+  # subset(resTE,pv.sup0<0.05)
+  # #significant negative effect
+  # subset(resTE,pv.inf0<0.05)
+  # #non-significant negative effect
+  # subset(resTE,pv.inf0>=0.05 & pv.sup0>=0.05)
+  
+}
+
+```
+
+
+# Tables goodness-of-fit
+
+```{r}
+
+c1=read.csv2(here::here("Output_pop-level","summary_R2.csv"),
+             sep=";",dec=".",h=T)
+c1_m <- c1 %>%
+  select(moy, type, model) %>%
+  spread(type,moy)
+
+c1_sd <- c1 %>%
+  select(sd, type, model) %>%
+  spread(type,sd)
+
+c1_m$r2m <- paste0(round(c1_m$r2m,2), " (", round(c1_sd$r2m,2), ")")
+c1_m$r2c <- paste0(round(c1_m$r2c,2), " (", round(c1_sd$r2c,2), ")")
+
+DT::datatable(c1_m,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(c1_m), `fontSize` = '80%')
+
+```
+
+# Tables coefficients
+
+```{r}
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+
+```
+
+
+## allW
+```{r}
+
+mytab=subset(c1,model=="allW")
+
+mytab <- mytab %>% 
+  mutate(moy = paste(round(moy,2), paste0("(",round(sd,2),")")),
+         q025 = round(q025,3),
+         p975 = round(p975,3))
+
+mytab <- mytab[-1,c(-3,-4,-7:-9)]
+
+mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)] <- gsub("scale(vel_abs)","Climate velocity",mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)] <- gsub("scale(GD)","Genetic diversity",mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("Param",mytab$var,fixed = TRUE)] <- gsub("Param","RangePosition",mytab$var[grep("Param",mytab$var,fixed = TRUE)],fixed = TRUE)
+
+names(mytab) <- c("Predictor variable", "Avg. coeff. (SD)", "Quant. 2.5%", "Quant. 9.75%")
+mytab <- mytab[c(10,9,11,1:3,6:8,4,5),]
+rownames(mytab) <- NULL
+
+allWtab <- mytab
+
+DT::datatable(allWtab,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(allWtab), `fontSize` = '80%')
+
+```
+
+## TECELEW
+```{r}
+
+# TE
+mytab=subset(c1,model=="TEW")
+
+mytab <- mytab %>% 
+  mutate(moy = paste(round(moy,2), paste0("(",round(sd,3),")")),
+         q025 = round(q025,3),
+         p975 = round(p975,3),
+         `Range position` = "Trailing edge")
+
+mytab <- mytab[-1,c(-3,-4,-7:-9)]
+
+mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)] <- gsub("scale(vel_abs)","Climate velocity",mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)] <- gsub("scale(GD)","Genetic diversity",mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)],fixed = TRUE)
+
+names(mytab) <- c("Predictor variable", "Avg. coeff. (SD)", "Quant. 2.5%", "Quant. 9.75%", "Range position")
+mytab <- mytab[c(8,7,9,1:6),c(5,1:4)]
+rownames(mytab) <- NULL
+
+mytabTE <- mytab
+
+
+# CE
+mytab=subset(c1,model=="CEW")
+
+mytab <- mytab %>% 
+  mutate(moy = paste(round(moy,2), paste0("(",round(sd,3),")")),
+         q025 = round(q025,3),
+         p975 = round(p975,3),
+         `Range position` = "Centroid")
+
+mytab <- mytab[-1,c(-3,-4,-7:-9)]
+
+mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)] <- gsub("scale(vel_abs)","Climate velocity",mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)] <- gsub("scale(GD)","Genetic diversity",mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)],fixed = TRUE)
+
+names(mytab) <- c("Predictor variable", "Avg. coeff. (SD)", "Quant. 2.5%", "Quant. 9.75%", "Range position")
+mytab <- mytab[c(8,7,9,1:6),c(5,1:4)]
+rownames(mytab) <- NULL
+
+mytabCE <- mytab
+
+
+# LE
+mytab=subset(c1,model=="LEW")
+
+mytab <- mytab %>% 
+  mutate(moy = paste(round(moy,2), paste0("(",round(sd,3),")")),
+         q025 = round(q025,3),
+         p975 = round(p975,3),
+         `Range position` = "Leading edge")
+
+mytab <- mytab[-1,c(-3,-4,-7:-9)]
+
+mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)] <- gsub("scale(vel_abs)","Climate velocity",mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)] <- gsub("scale(GD)","Genetic diversity",mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)],fixed = TRUE)
+
+names(mytab) <- c("Predictor variable", "Avg. coeff. (SD)", "Quant. 2.5%", "Quant. 9.75%", "Range position")
+mytab <- mytab[c(8,7,9,1:6),c(5,1:4)]
+rownames(mytab) <- NULL
+
+mytabLE <- mytab
+
+# Combine
+TECELEWtab <- rbind(mytabTE,mytabCE,mytabLE)
+
+DT::datatable(TECELEWtab,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(TECELEWtab), `fontSize` = '80%')
+
+```
+
+
+## TECELEW2
+```{r}
+
+mytab=subset(c1,model=="allW2")
+
+mytab <- mytab %>% 
+  mutate(moy = paste(round(moy,2), paste0("(",round(sd,2),")")),
+         q025 = round(q025,3),
+         p975 = round(p975,3))
+
+mytab <- mytab[-1,c(-3,-4,-7:-9)]
+
+mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)] <- gsub("scale(vel_abs)","Climate velocity",mytab$var[grep("scale(vel_abs)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)] <- gsub("scale(GD)","Genetic diversity",mytab$var[grep("scale(GD)",mytab$var,fixed = TRUE)],fixed = TRUE)
+mytab$var[grep("Param",mytab$var,fixed = TRUE)] <- gsub("Param","RangePosition",mytab$var[grep("Param",mytab$var,fixed = TRUE)],fixed = TRUE)
+
+names(mytab) <- c("Predictor variable", "Avg. coeff. (SD)", "Quant. 2.5%", "Quant. 9.75%")
+mytab <- mytab[c(9:14,15:17,1:8),]
+rownames(mytab) <- NULL
+
+TECELEW2tab <- mytab
+
+DT::datatable(TECELEW2tab,
+              rownames = FALSE,
+              extensions = 'Buttons',
+              options = list(pageLength = 100, 
+                             dom = 'B',
+                             buttons = c('excel'))) %>%
+  DT::formatStyle(columns = colnames(TECELEW2tab), `fontSize` = '80%')
+
+```
+
+# Graphics coefficients
+
+## allW
+```{r fig.width=8, fig.height=4}
+ggplot(allWtab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")), 
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +
+  ylim(rev(allWtab$`Predictor variable`)) +
+  ylab("")+
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+
+```{r fig.width=5, fig.height=1.5}
+# focus on ecology
+selected_vars <- allWtab$`Predictor variable`[1:3]
+
+ggplot(allWtab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
+         filter(`Predictor variable` %in% selected_vars), 
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +
+  ylab("")+
+  ylim(rev(selected_vars)) +
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic() +
+  theme(legend.position = "none")
+
+```
+
+## TECELEW
+```{r fig.width=8, fig.height=4}
+ggplot(TECELEWtab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")),
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +
+  ylim(unique(rev(TECELEWtab$`Predictor variable`))) +
+  ylab("")+
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic()+
+  facet_grid(.~`Range position`)+
+  theme(legend.position = "none")
+```
+
+
+```{r fig.width=5, fig.height=1.5*3}
+# focus on ecology
+selected_vars <- TECELEWtab$`Predictor variable`[1:3]
+
+ggplot(TECELEWtab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
+         filter(`Predictor variable` %in% selected_vars), 
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +  
+  ylim(rev(selected_vars)) +
+  ylab("")+
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic()+
+  theme(strip.background = element_blank())+
+  facet_wrap(.~`Range position`,ncol = 1)+
+  theme(legend.position = "none")
+
+```
+
+## TECELEW2
+```{r fig.width=8, fig.height=4}
+ggplot(TECELEW2tab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")),
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +
+  ylim(unique(rev(TECELEW2tab$`Predictor variable`))) +
+  ylab("")+
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+
+```{r fig.width=5, fig.height=3}
+# focus on ecology
+selected_vars <- TECELEW2tab$`Predictor variable`[1:9]
+
+ggplot(TECELEW2tab %>%
+         rowwise() %>%
+         mutate(`Avg. coeff. + Std. error` = as.numeric(strsplit(`Avg. coeff. (SD)`, " ")[[1]][1]),
+                `Predictor variable` = factor(`Predictor variable`, levels = `Predictor variable`),
+                sig = ifelse((`Quant. 2.5%` > 0 & `Quant. 9.75%` < 0) | (`Quant. 2.5%` < 0 & `Quant. 9.75%` > 0),"n","y")) %>%
+         filter(`Predictor variable` %in% selected_vars), 
+       aes(x = `Avg. coeff. + Std. error`, y = `Predictor variable`, color = sig)) +
+  scale_color_manual(values = c("y" = "black", "n" = "gray")) +  
+  ylim(rev(selected_vars)) +
+  ylab("")+
+  geom_point(size=2) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = `Quant. 2.5%`, xmax = `Quant. 9.75%`)) +
+  theme_classic()+
+  theme(strip.background = element_blank())+
+  theme(legend.position = "none")
+
+```
+
+
+# Graphics effect GD
+
+```{r}
+# GD_graph_params <- 
+#   list(geom_line(), 
+#        labs(x = "Genetic diversity", 
+#             y = bquote('Absolute velocity of range shift '(km.yr^1)),
+#             color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))), 
+#        scale_color_gradientn(colors = c("#00AFBB", "#E7B800", "#FC4E07"),
+#                              guide = guide_colourbar(title.position = "right",
+#                                                      barwidth = 1, barheight = 10),
+#                              limits=c(0, 7),
+#                              breaks=c(seq(0,7,by=1))),  
+#        theme_classic(),  
+#        scale_x_continuous(breaks=c(c(seq(0,0.05,by=.01))),
+#                           labels=c("0",as.character(seq(0.01,0.05,by=.01))),
+#                           limits=c(0,0.055), expand=c(0,0)),  
+#        scale_y_continuous(breaks=c(seq(0,6,by=2)), limits=c(0,6), expand=c(0,0)),  
+#        theme(legend.title = element_text(angle = -90), 
+#              legend.title.align = 0.5))
+
+
+rampPallFunGD <- function(x){
+  tmp <- colorRampPalette(colors = c("#00AFBB", "#E7B800", "#FC4E07"))(length(x))
+  pos <- which(x==0)
+  tmp[pos] <- "lightgray"
+  return(tmp)
+}
+
+GD_graph_params <- 
+  list(geom_line(size = 1), 
+       labs(x = "Genetic diversity", 
+            y = bquote('Absolute velocity of range shift '(km.yr^1)),
+            color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))), 
+       theme_classic(),  
+       scale_x_continuous(n.breaks = 5, 
+                          limits=c(0,0.055), expand=c(0,0),
+                          labels=c("0",as.character(seq(0.01,0.05,length.out=5)))),  
+       scale_y_continuous(n.breaks = 4, 
+                          limits=c(0,6), 
+                          expand=c(0,0)),  
+       theme(legend.title = element_text(angle = -90), 
+             legend.title.align = 0.5))
+
+```
+
+
+## AllW
+
+```{r }
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_allW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=mydatatogo
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+legend <- cowplot::get_legend(
+  gg1 +
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+gg1a <- gg1 + theme(legend.position="none") + ggtitle("") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r fig.width=12/3,fig.height=5}
+
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_TEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+```
+
+```{r fig.width=12/3,fig.height=5}
+
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_CEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="O")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg2 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+
+```
+
+```{r fig.width=12/3,fig.height=5}
+
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_LEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="LE")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg3 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+```
+
+
+### Fig across edges
+```{r fig.width=12/3,fig.height=5}
+(gg1a + legend) + 
+  plot_layout(nrow = 1, widths = c(1,.3))
+```
+
+
+### Group fig v1
+```{r fig.width=10,fig.height=5}
+
+p1 <- gg1 + theme(legend.position="none") + ggtitle("Trailing edge") + theme(plot.title = element_text(hjust = 0.5))
+p2 <- gg2 + theme(legend.position="none") + ggtitle("Centroid") + theme(plot.title = element_text(hjust = 0.5))
+p3 <- gg3 + theme(legend.position="none") + ggtitle("Leading edge") + theme(plot.title = element_text(hjust = 0.5))
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+### Group fig v2
+```{r fig.width=12,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (0.004 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (3 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg1 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg2 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Centroid") 
+
+p3 <- gg3 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Leading edge")
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+## allW2
+Model with all edges and looking at the effect of GD at each velocity level
+```{r}
+## allW2_TE GDeff
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_allW2_TE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW2")
+
+int=c1a$moy[c1a$var=="(Intercept)"]+c1a$moy[c1a$var=="ParamTE"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+gg12 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+```
+
+
+```{r}
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_allW2_CE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW2")
+int=c1a$moy[c1a$var=="(Intercept)"]
+dsel=subset(mydatatogo,Param=="O")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg2 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+gg22 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+
+
+```
+
+```{r}
+## allW2_LE GDeff
+
+res=read.csv2(here::here("Output_pop-level","summary_GDeff_allW2_LE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW2")
+int=c1a$moy[c1a$var=="(Intercept)"]+c1a$moy[c1a$var=="ParamLE"]
+
+dsel=subset(mydatatogo,Param=="LE")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=v2,pred1,
+                   vel_abs=res$vel_abs[i],
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg3 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+gg32 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+  GD_graph_params +
+  scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 7),
+                        breaks=c(seq(0,7,by=1)))  
+
+
+
+```
+
+### Group fig v1
+```{r fig.width=10,fig.height=5}
+p1 <- gg1 + theme(legend.position="none") + ggtitle("Trailing edge") + theme(plot.title = element_text(hjust = 0.5))
+p2 <- gg2 + theme(legend.position="none") + ggtitle("Centroid") + theme(plot.title = element_text(hjust = 0.5))
+p3 <- gg3 + theme(legend.position="none") + ggtitle("Leading edge") + theme(plot.title = element_text(hjust = 0.5))
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+### Group fig v2
+```{r fig.width=13,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (0.004 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (3 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg12 + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg22 + 
+  ggtitle("Centroid") 
+
+p3 <- gg32 + 
+  ggtitle("Leading edge")
+
+
+(p1 + p2 + p3) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)'))) # figure tags
+
+
+```
+
+### Group fig v3
+```{r fig.width=12,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (0.004 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (3.3 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg1 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg2 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Centroid") 
+
+p3 <- gg3 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Leading edge")
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunGD(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+
+```
+
+In general, GD helps species to stay in place as climate velocities increase across all positions of a species range.
+At the trailing edge, the effect of GD of range shifts is significantly negative when climate velocity is high (>3km.yr^1), indicating that species stay in place (or lag more from climate change) when exposure is high. 
+
+As climate velocity increases, low GD species move faster than high GD species to keep up with climate change. This corroborates the hypotheses that GD increases species' ability to stay in place. The fact that low GD species show a positive relationship with climate velocity indicates that climate exposure poses higher pressure on them relative to high GD species. As a consequence, low GD species have to move to track changing climates and stay under their thermal niches, otherwise they would go extinct. As GD increases, the effect of climate exposure on species range shift is relaxed -- species track climate change less closely.
+
+Across all range edges, low GD species move faster as climate velocity increases, whereas high GD species move slower.
+
+### Significant velocity values
+```{r}
+
+res=lapply(c("LE","CE","TE"), function(x){
+  tmp <- read.csv2(here::here("Output_pop-level",paste0("summary_GDeff_allW2_","TE",".csv")),
+                   sep=";",dec=".",h=T)
+  tmp$edge = x
+  return(tmp)
+})
+
+res <- rbindlist(res)
+
+res %>%
+  group_by(edge) %>%
+  summarise(sig_inf = paste(vel_abs), collapse = " ,")
+
+```
+
+
+
+
+
+# Graphics effect velocity
+
+```{r}
+# GD_graph_params <- 
+#   list(geom_line(), 
+#        labs(x = "Genetic diversity", 
+#             y = bquote('Absolute velocity of range shift '(km.yr^1)),
+#             color = bquote('Absolute velocity of isotherm shifts '(km.yr^1))), 
+#        scale_color_gradientn(colors = c("#00AFBB", "#E7B800", "#FC4E07"),
+#                              guide = guide_colourbar(title.position = "right",
+#                                                      barwidth = 1, barheight = 10),
+#                              limits=c(0, 7),
+#                              breaks=c(seq(0,7,by=1))),  
+#        theme_classic(),  
+#        scale_x_continuous(breaks=c(c(seq(0,0.05,by=.01))),
+#                           labels=c("0",as.character(seq(0.01,0.05,by=.01))),
+#                           limits=c(0,0.055), expand=c(0,0)),  
+#        scale_y_continuous(breaks=c(seq(0,6,by=2)), limits=c(0,6), expand=c(0,0)),  
+#        theme(legend.title = element_text(angle = -90), 
+#              legend.title.align = 0.5))
+
+
+rampPallFunVel <- function(x){
+  tmp <- viridis_pal(option = "D")(length(x))
+  pos <- which(x==0)
+  tmp[pos] <- "lightgray"
+  return(tmp)
+}
+
+vel_graph_params <- 
+  list(geom_line(size = 1), 
+       labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+            y = bquote('Absolute velocity of range shift '(km.yr^1)),
+            color = "Genetic diversity"), 
+       theme_classic(),  
+       scale_x_continuous(n.breaks = 8, 
+                          limits=c(0,7), 
+                          expand=c(0,0)),  
+       scale_y_continuous(n.breaks = 6, 
+                          limits=c(0,10), 
+                          expand=c(0,0)),  
+       theme(legend.title = element_text(angle = -90), 
+             legend.title.align = 0.5))
+
+```
+
+
+## AllW
+
+
+```{r }
+## AllW
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_allW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=mydatatogo
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.05),
+                        breaks=c(seq(0,0.05,by=.01)))  
+
+legend <- cowplot::get_legend(
+  gg1 +
+    scale_color_gradientn(colors = rampPallFunVel(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 0.05),
+                          breaks=c(seq(0,0.05,by=.01))))
+
+gg1a <- gg1 + theme(legend.position="none") + ggtitle("") + theme(plot.title = element_text(hjust = 0.5))
+
+### TEW
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_TEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.05),
+                        breaks=c(seq(0,0.05,by=.01)))  
+
+```
+
+
+```{r fig.width=12/3,fig.height=5}
+### CEW
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_CEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="O")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg2 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.05),
+                        breaks=c(seq(0,0.05,by=.01)))  
+
+
+```
+
+
+```{r fig.width=12/3,fig.height=5}
+### LEW
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_LEW.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$moy[c1a$var=="(Intercept)"]
+
+dsel=subset(mydatatogo,Param=="LE")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+gg3 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.05),
+                        breaks=c(seq(0,0.05,by=.01)))  
+
+```
+
+
+### Fig across edges
+```{r fig.width=12/3,fig.height=5}
+(gg1a + legend) + 
+  plot_layout(nrow = 1, widths = c(1,.3))
+```
+
+### Group fig v1
+```{r fig.width=10,fig.height=5}
+
+p1 <- gg1 + theme(legend.position="none") + ggtitle("Trailing edge") + theme(plot.title = element_text(hjust = 0.5))
+p2 <- gg2 + theme(legend.position="none") + ggtitle("Centroid") + theme(plot.title = element_text(hjust = 0.5))
+p3 <- gg3 + theme(legend.position="none") + ggtitle("Leading edge") + theme(plot.title = element_text(hjust = 0.5))
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunVel(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+### Group fig v2
+```{r fig.width=12,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (.5 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (5 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg1 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg2 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Centroid") 
+
+p3 <- gg3 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Leading edge")
+
+p4 <- gg3 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Leading edge")
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunVel(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+## allW2
+Model with all edges and looking at the effect of GD at each velocity level
+```{r}
+## allW2_TE VAeff
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_allW2_TE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW2")
+
+int=c1a$moy[c1a$var=="(Intercept)"]+c1a$moy[c1a$var=="ParamTE"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+gg1 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+gg12 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+```
+
+
+```{r}
+## allW2_CE VAeff
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_allW2_CE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW2")
+int=c1a$moy[c1a$var=="(Intercept)"]
+dsel=subset(mydatatogo,Param=="O")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+gg2 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+gg22 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+```
+
+```{r}
+## allW2_LE VAeff
+
+res=read.csv2(here::here("Output_pop-level","summary_VAeff_allW2_LE.csv"),
+              sep=";",dec=".",h=T) 
+c1=read.csv2(here::here("Output_pop-level","summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW2")
+int=c1a$moy[c1a$var=="(Intercept)"]+c1a$moy[c1a$var=="ParamLE"]
+
+dsel=subset(mydatatogo,Param=="LE")
+
+v2=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+
+for(i in 1:nrow(res)){
+  pred1=exp(int+res$moy[i]*((v2-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$moy[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$moy[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)) 
+  pred1=data.frame(GD=res$GD[i],
+                   pred1,
+                   vel_abs=v2,
+                   sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                   lower = res$q025[i],
+                   upper = res$p975[i])
+  if(i==1){
+    pred2=pred1
+  }else{
+    pred2=rbind(pred2,pred1)
+  }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX=pred2
+  predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+  if(nrow(resX)<5){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=nrow(resX)),3)
+  }else{
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+  }
+  predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+  predX2=predX
+  predX2$signifP=NA
+}
+
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+gg3 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+gg32 <- ggplot(data=predX1, aes(vel_abs, pred1, color = GD, group=ID)) +
+  vel_graph_params +
+  scale_color_gradientn(colors = rampPallFunVel(sigcolor$x),
+                        guide = guide_colourbar(title.position = "right",
+                                                barwidth = 1, barheight = 15),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.055,by=.01)))  
+
+```
+
+### Group fig v1
+```{r fig.width=10,fig.height=5}
+p1 <- gg1 + theme(legend.position="none") + ggtitle("Trailing edge") + theme(plot.title = element_text(hjust = 0.5))
+p2 <- gg2 + theme(legend.position="none") + ggtitle("Centroid") + theme(plot.title = element_text(hjust = 0.5))
+p3 <- gg3 + theme(legend.position="none") + ggtitle("Leading edge") + theme(plot.title = element_text(hjust = 0.5))
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunVel(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 0.055),
+                          breaks=c(seq(0,0.055,by=.01))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+```
+
+### Group fig v2
+```{r fig.width=13,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (0.004 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (3 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg12 + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg22 + 
+  ggtitle("Centroid") 
+
+p3 <- gg32 + 
+  ggtitle("Leading edge")
+
+
+(p1 + p2 + p3) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)'))) # figure tags
+
+
+```
+
+### Group fig v3
+```{r fig.width=12,fig.height=5}
+
+ranges <- ggplot_build(p1) %>% 
+  pluck("layout", "panel_params", 1) %>% 
+  `[`(c("x.range", "y.range"))
+
+x <- (0.5 - ranges$x.range[1]) / (ranges$x.range[2] - ranges$x.range[1])
+y <- (5.5 - ranges$y.range[1]) / (ranges$y.range[2] - ranges$y.range[1])
+
+p1 <- gg1 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Trailing edge") 
+
+p2 <- gg2 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Centroid") 
+
+p3 <- gg3 + 
+  theme(legend.title=element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = c(x, y), legend.justification = c(0, 0)) + 
+  ggtitle("Leading edge")
+
+legend <- cowplot::get_legend(
+  gg3 +
+    scale_color_gradientn(colors = rampPallFunVel(x=rep(1,nrow(sigcolor))),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 15),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1))))
+
+(p1 + p2 + p3 + legend) + 
+  plot_layout(axis_titles = "collect", nrow = 1, widths = c(1,1,1,.3)) + # common axes
+  plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+
+
+```
+
+
+
+
+
+

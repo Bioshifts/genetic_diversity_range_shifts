@@ -12,21 +12,43 @@ output:
 # Load libraries and source code
 
 ```{r libs, message=FALSE}
-
-# devtools::install_github('EcologicalTraitData/traitdataform')
-
 rm(list=ls())
 
-list.of.packages <- c("ggplot2","data.table","dplyr","tidyr","parallel","bdc","taxadb","traitdataform","pbapply","tidyverse","readxl","lme4","coefplot","sjPlot","sjmisc","effects","rgdal","maptools","rgeos","terra","MuMIn","rnaturalearthdata","lsmeans","GGally","tidyterra","httr","purrr","rlist","usethis")
-
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
+library(ggplot2)
+require(data.table)
+library(dplyr)
+library(tidyr)
+require(parallel)
+library(bdc)
+library(taxadb)
+library(traitdataform)
+library(pbapply)
+library(tidyverse)
+library(readxl)
+library(lme4)
+library(coefplot)
+library(sjPlot)
+library(sjmisc)
+library(effects)
+library(rgdal)
+library(maptools)
+# library(rgeos)
+library(terra)
+library(MuMIn)
+# library(nlme)
+# library(pscl)
+library(lsmeans)
+# library(arm)
+# library(MCMCglmm)
+# library(PerformanceAnalytics)
+library(GGally)
+# library(broom.mixed)
+library(tidyterra)
+# library(rnaturalearth)
 
 ```
 
+# Functions
 # source functions
 
 ```{r func}
@@ -48,36 +70,37 @@ sapply(list.of.packages, require, character.only = TRUE)
 # write GITHUB_PAT=YOUR_TOKEN
 # Sys.getenv("GITHUB_PAT")
 
-source(here::here("R/fetchGHdata.R"))
-
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "bioshifts_v1_v2", 
-            path = "R/Source_code/Clean_names.R",
-            output = here::here("R/Clean_names.R"))
-
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "bioshifts_v1_v2", 
-            path = "R/Source_code/Find_Sci_Names.R",
-            output = here::here("R/Find_Sci_Names.R"))
+# source(here::here("R/fetchGHdata.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Clean_names.R",
+#             output = here::here("R/Clean_names.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Find_Sci_Names.R",
+#             output = here::here("R/Find_Sci_Names.R"))
 
 source(here::here("R/Clean_names.R"))
 source(here::here("R/Find_Sci_Names.R"))
+source(here::here("R/mclapply_hack.R"))
 
 # Malin's transformation for moving values slightly inward. 
 transform01 <- function(x) (x * (length(x) - 1) + 0.5) / (length(x))
 
 # De Kort transformation
 deKort_trans <- function(p){
-    p <- scale(p)
-    p <- (p - min(p, na.rm = T))/(max(p, na.rm = T)-min(p, na.rm = T))
-    return(p)
+  p <- scale(p)
+  p <- (p - min(p, na.rm = T))/(max(p, na.rm = T)-min(p, na.rm = T))
+  return(p)
 }
 
 # Malin's transformation before a logit transformation
 logit_trans <- function(p){
-    p <- transform01(p)
-    p <- log(p/(1-p))
-    return(p)
+  p <- transform01(p)
+  p <- log(p/(1-p))
+  return(p)
 }
 
 ```
@@ -87,7 +110,6 @@ logit_trans <- function(p){
 ```{r splist}
 
 splist <- read.csv(here::here("Data/splist.csv"), header = T)
-
 # remove duplicated sp_names
 splist <- splist %>%
     dplyr::filter(!duplicated(scientificName))%>%
@@ -106,6 +128,36 @@ splist$Genus <- sapply(splist$scientificName, function(x){
 
 # Load bioshifts
 
+## Geo data
+```{r}
+
+if(!file.exists(here::here("data/bioshiftsv3_metadata.csv"))){
+  
+  # # From Google drive
+  # drive_path <- readWindowsShortcut("G:/My Drive.lnk")$pathname
+  # bioshifts_path <- readWindowsShortcut(paste0(drive_path,"\\BIOSHIFTS Working Group.lnk"))$pathname
+  # shp_path <- here::here(bioshifts_path,("DATA/BIOSHIFTS_v3/CleanDatabasev3/ShapefilesBioShiftsv3"))
+  # all_shps <- list.files(shp_path,pattern = "dbf", full.names = TRUE)
+  
+  # From local folder
+  all_shps <- list.files("C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/ShapefilesBioShiftsv3",
+                         pattern = "shp", full.names = TRUE)
+  
+  biov1_meta <- pblapply(all_shps, terra::vect)
+  biov1_meta <- pblapply(biov1_meta, data.frame)
+  
+  biov1_meta <- data.table::rbindlist(biov1_meta)
+  
+  write.csv(biov1_meta, here::here("data/bioshiftsv3_metadata.csv"),row.names = FALSE)
+  
+} else {
+  
+  biov1_meta <- read.csv(here::here("data/bioshiftsv3_metadata.csv"))
+  
+}
+
+```
+
 ## Load v1
 
 ```{r v1}
@@ -114,34 +166,88 @@ biov1 <- read.csv(here::here("Data/biov1_fixednames.csv"), header = T)
 
 # Fix references in biov1
 biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+
+# Select columns of interest
 biov1 <- biov1 %>%
-    dplyr::select(ID,Article_ID,Study_ID,
-                  Type,Param,Trend,SHIFT,UNIT,DUR,
-                  v.lat.mean,v.ele.mean,
-                  START,END,Sampling,Uncertainty_Distribution,Uncertainty_Parameter,
-                  N,Grain_size,Data,ID.area,
-                  Phylum,Class,Order,Family,Genus,sp_name_std_v1,
-                  group,ECO,Hemisphere) %>% # select columns
-    mutate(
-        Type = case_when(
-            Type=="HOR" ~ "LAT",
-            TRUE ~ as.character(Type)),
-        Data = case_when(
-            Data=="occurence-based" ~ "occurrence-based",
-            TRUE ~ as.character(Data)),
-        spp = sp_name_std_v1,
-        SHIFT_abs = abs(SHIFT),
-        velocity = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
-        vel_sign = ifelse(velocity>0,"pos","neg"))
+  filter(!Type %in% c("BAT","LON")) %>%
+  dplyr::select(ID,Article_ID,Study_ID,
+                Type,Param,Trend,SHIFT,UNIT,DUR,
+                v.lat.mean,v.ele.mean,trend.mean,
+                START,END,Sampling,Uncertainty_Distribution,Uncertainty_Parameter,Nperiodes,
+                N,Grain_size,Data,ID.area,
+                Phylum,Class,Order,Family,Genus,sp_name_std_v1,
+                group,ECO,Hemisphere) %>% # select columns
+  mutate(
+    Type = case_when(
+      Type=="HOR" ~ "LAT",
+      TRUE ~ as.character(Type)),
+    Data = case_when(
+      Data=="occurence-based" ~ "occurrence-based",
+      TRUE ~ as.character(Data)),
+    spp = sp_name_std_v1,
+    SHIFT_abs = abs(SHIFT),
+    velocity = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
+    vel_sign = ifelse(velocity>0,"pos","neg"))
+
+# add geospatial data
+biov1_meta$ID <- biov1_meta$Name
 
 biov1 <- biov1 %>%
-    dplyr::filter(!is.na(sp_name_std_v1))
+  filter(ID %in% biov1_meta$ID)
+
+# merge
+biov1 <- merge(biov1,biov1_meta,by="ID",all.y = TRUE) # all.y to keep only studies with geospatial data
+
+# Get Extent (=Lat/Ele extent)
+biov1$Extent <- biov1$LatExtentk
+biov1$Extent[which(biov1$Type=="ELE")] <- biov1$EleExtentm[which(biov1$Type=="ELE")]
+
+# Number of temporal units
+biov1$NtempUnits <- biov1$Nperiodes
+these <- which(biov1$NtempUnits > biov1$DUR)
+biov1$NtempUnits[these] <- biov1$DUR[these]
+
+# log NtempUnits
+biov1$LogNtempUnits <- log(biov1$NtempUnits)
+
+## group irregular sampling with multiple sampling  
+biov1$Sampling = ifelse(biov1$Sampling %in% c("IRR","MULTIPLE(continuous)"),"MULT", biov1$Sampling)
+
+## Grain
+biov1$Grain <- factor(biov1$Grain_size, levels = c("small", "moderate", "large","very_large"))
+biov1$ContinuousGrain <- 
+  as.numeric(
+    as.character(
+      ifelse(
+        biov1$Grain == "small", 1, 
+        ifelse(biov1$Grain == "moderate",
+               2, #10,
+               ifelse(biov1$Grain == "large",
+                      3, #100,
+                      4))))) #we have a few very large in the full database
+
+#harmonize column names
+biov1$Quality <- ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING"),"BALANCED",
+                        ifelse(biov1$Uncertainty_Distribution %in% c("MODEL","MODEL+RESAMPLING(same)","RESAMPLING(same)+MODEL","RESAMPLING+MODEL"),"BALANCED",
+                               ifelse(biov1$Uncertainty_Distribution %in% c("DETECTABILITY","RESAMPLING(same)+DETECTABILITY"),"BALANCED",
+                                      ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING(same)"),"RESURVEYED",biov1$Uncertainty_Distribution))))
+
+table(biov1$Quality) 
+
+biov1$PrAb <- ifelse(biov1$Data %in% c("occurence-based", "occurrence-based"),"occurrence","abundance")
+table(biov1$PrAb) 
+
+biov1 <- biov1 %>%
+  dplyr::filter(!is.na(sp_name_std_v1))
 
 all(biov1$sp_name_std_v1 %in% splist$scientificName)
 
 # from continuous to categorical
 q1=quantile(biov1$START,probs=c(0,0.25,0.5,0.75,1))
 biov1$StartF=cut(biov1$START,breaks=q1,include.lowest=T)
+
+q1=quantile(biov1$Extent ,probs=c(0,0.25,0.5,0.75,1))
+biov1$ExtentF=cut(biov1$Extent,breaks=q1,include.lowest=T)
 
 q1=quantile(biov1$ID.area,probs=c(0,0.25,0.5,0.75,1))
 biov1$AreaF=cut(biov1$ID.area,breaks=q1,include.lowest=T)
@@ -151,7 +257,6 @@ biov1$NtaxaF=cut(biov1$N,breaks=q1,include.lowest=T)
 
 # add ID to obs
 biov1$obs_ID <- paste0("S",1:nrow(biov1))
-
 
 summary(biov1$velocity)
 summary(biov1$velocity[which(biov1$vel_sign=="pos")])
@@ -251,7 +356,7 @@ Use only latitudinal and elevational shifts
 
 # v1
 biov1 <- biov1 %>%
-    dplyr::filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+  dplyr::filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
 
 # splist
 sps <- unique(biov1$sp_name)
@@ -264,16 +369,16 @@ splist <- splist %>% dplyr::filter(scientificName %in% sps)
 ```{r clean}
 
 if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
-    biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_reported_name_v1))
+  biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_reported_name_v1))
 }
 if(any(grep("sp[.]",biov1$sp_name_std_v1))){
-    biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_name_std_v1))
+  biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_name_std_v1))
 }
 if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
-    biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_reported_name_v1))
+  biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_reported_name_v1))
 }
 if(any(grep("cf[.]",biov1$sp_name_std_v1))){
-    biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_name_std_v1))
+  biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_name_std_v1))
 }
 
 #remove freshwater fishes
@@ -284,16 +389,16 @@ biov1 <- biov1[-which(biov1$Class == "Aves" & biov1$ECO=="M"),]
 
 
 if(any(grep("sp[.]",splist$scientificName))){
-    splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
+  splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
 }
 if(any(grep("sp[.]",splist$scientificName))){
-    splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
+  splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
 }
 if(any(grep("cf[.]",splist$scientificName))){
-    splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
+  splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
 }
 if(any(grep("cf[.]",splist$scientificName))){
-    splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
+  splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
 }
 
 
@@ -380,35 +485,6 @@ biov1 <- merge(biov1, centroids, by = "ID")
 
 ```
 
-# Corrected shifts
-
-Just load it in
-
-```{r}
-
-fetchGHdata(gh_account = "Bioshifts", 
-            repo = "MethodologicalAdjustment", 
-            path = "outputs/biov1_method_corrected_shifts_study_level.csv",
-            output = here::here("Data/biov1_method_corrected_shifts_study_level.csv"))
-
-biov1_corr <- read.csv(here::here("Data/biov1_method_corrected_shifts_study_level.csv"))
-
-# add corrected shifts
-biov1 <- merge(biov1, 
-               biov1_corr %>%
-                   select(c("Article_ID","Study_ID","Class","Type","SLDiff1")), 
-               by = c("Article_ID","Study_ID","Class","Type"),
-               all.x = TRUE)
-
-biov1$SHIFT_cor <- abs(biov1$SHIFT) - biov1$SLDiff1
-
-# change sign for negative shifts
-biov1$neg_shifts <- ifelse(sign(biov1$SHIFT) == -1 & biov1$SHIFT != 0, 1, 0)
-
-biov1$SHIFT_cor[which(biov1$neg_shifts == 1)] <- biov1$SHIFT_cor[which(biov1$neg_shifts == 1)] * -1
-
-```
-
 # Direction of shift
 
 Identify direction of shift
@@ -416,22 +492,14 @@ Identify direction of shift
 ```{r shift_direction}
 
 biov1 <- biov1 %>%
-    mutate(shift_sign = ifelse(SHIFT>0,"pos","neg"),
-           shift_vel_sign = paste0(shift_sign,vel_sign),
-           shiftC_sign = ifelse(SHIFT_cor>0,"pos","neg"),
-           shiftC_vel_sign = paste0(shiftC_sign,vel_sign)
-    ) %>%
-    filter(!is.na(velocity))
+  mutate(shift_sign = ifelse(SHIFT>0,"pos","neg"),
+         shift_vel_sign = paste0(shift_sign,vel_sign)) %>%
+  filter(!is.na(velocity))
 
 ggplot(biov1, aes(x=shift_vel_sign))+
-    geom_bar()+
-    coord_flip()+
-    facet_wrap(Type~Param)
-
-ggplot(biov1, aes(x=shiftC_vel_sign))+
-    geom_bar()+
-    coord_flip()+
-    facet_wrap(Type~Param)
+  geom_bar()+
+  coord_flip()+
+  facet_wrap(Type~Param)
 
 summary(biov1$velocity)
 summary(biov1$velocity[which(biov1$shift_vel_sign=="pospos")])
@@ -460,295 +528,103 @@ biov1$lag2[position] <- abs(biov1$velocity[position])
 # When shift is > velocity, lag = 0
 biov1$lag3 = biov1$lag2
 position <- which((biov1$shift_sign == "pos" & biov1$SHIFT > biov1$velocity) |
-                      (biov1$shift_sign == "neg" & biov1$SHIFT < biov1$velocity))
+                    (biov1$shift_sign == "neg" & biov1$SHIFT < biov1$velocity))
 biov1$lag3[position] <- 0
 
 
 {
-    par(mfrow=c(2,2))
-    plot(lag~velocity, biov1)
-    plot(lag2~velocity, biov1)
-    plot(lag3~velocity, biov1)
+  par(mfrow=c(2,2))
+  plot(lag~velocity, biov1)
+  plot(lag2~velocity, biov1)
+  plot(lag3~velocity, biov1)
 }
 
 ggplot(biov1, aes(x = Param, y=lag, fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
 
 ggplot(biov1, aes(x = Param, y=lag2, fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
 
 ggplot(biov1, aes(x = Param, y=log1p(lag3), fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    # scale_y_continuous(limits = quantile(log1p(biov1$lag3), c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  # scale_y_continuous(limits = quantile(log1p(biov1$lag3), c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
 
 ```
 
-# Calculate lags corrected
-
-```{r lagsC}
-
-# calculate lagCs
-# positive values are a lagC (range shift lower smaller than expected or in opposite directions) and negative values are range shift larger than expected
-biov1$lagC <- biov1$velocity-biov1$SHIFT_cor
-position = which(biov1$vel_sign == "neg")
-biov1$lagC[position] <- biov1$lagC[position] * -1 # Any negative velocity means the sign of lagC has to shift.
-
-# Lag 2
-# When shift is in opposite sign of velocity, lagC == velocity
-biov1$lagC2 = biov1$lagC
-position <- which(biov1$shiftC_vel_sign == "posneg" | biov1$shiftC_vel_sign == "negpos")
-biov1$lagC2[position] <- abs(biov1$velocity[position])
-
-# Lag 3
-# When shift is > velocity, lagC = 0
-biov1$lagC3 = biov1$lagC2
-position <- which((biov1$shiftC_sign == "pos" & biov1$SHIFT_cor > biov1$velocity) |
-                      (biov1$shiftC_sign == "neg" & biov1$SHIFT_cor < biov1$velocity))
-biov1$lagC3[position] <- 0
-
-
-{
-    par(mfrow=c(2,2))
-    plot(lagC~velocity, biov1)
-    plot(lagC2~velocity, biov1)
-    plot(lagC3~velocity, biov1)
-}
-
-ggplot(biov1, aes(x = Param, y=lagC, fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    scale_y_continuous(limits = quantile(biov1$lagC2, c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
-
-ggplot(biov1, aes(x = Param, y=lagC2, fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    scale_y_continuous(limits = quantile(biov1$lagC2, c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
-
-ggplot(biov1, aes(x = Param, y=log1p(lagC3), fill = Param, color = Param))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    # scale_y_continuous(limits = quantile(log1p(biov1$lagC3), c(0.1, 0.9), na.rm = T))+
-    facet_wrap(.~Type, scales = "free")
-
-```
-
-# Corrected vs raw shifts
-
-```{r }
-
-plot(SHIFT_cor~SHIFT,biov1)
-abline(a=0,b=1,col=2)
-lm0=lm(SHIFT_cor~SHIFT,biov1)
-summary(lm0)
-hist(biov1$SHIFT,col=rgb(1,0,0,0.5))
-hist(biov1$SHIFT_cor,col=rgb(0,0,1,0.5),add=T)
-#so by using residuals we decrease the variation in the raw range shift obs, it's like we work on a more homogenous variables as all the variations due to methods variation has been substracted to the shift.
-
-x1=tapply(biov1$SHIFT,biov1$Group,mean)
-x2=tapply(biov1$SHIFT_cor,biov1$Group,mean)#lower mean value than true obs 
-plot(x1~x2, xlab="Mean shift per Group (raw)", ylab="Mean shift per Group (corrected)")
-lm0=lm(x1~x2,biov1)
-summary(lm0) #it changes many things
-
-x1=tapply(biov1$SHIFT,biov1$Group,var)
-x2=tapply(biov1$SHIFT_cor,biov1$Group,var)#lower variance value than in true obs 
-plot(x1~x2, xlab="Variance shift per Group (raw)", ylab="Variance shift per Group (corrected)")
-lm0=lm(x1~x2,biov1)
-summary(lm0) #but high positive correlation meaning that relative variation is conserved
-
-x1=tapply(biov1$SHIFT,biov1$sp_name_std_v1,mean)
-x2=tapply(biov1$SHIFT_cor,biov1$sp_name_std_v1,mean)#lower mean value than in true obs 
-plot(x1~x2, xlab="Mean shift per species (raw)", ylab="Mean shift per species (corrected)")
-lm0=lm(x1~x2,biov1)
-summary(lm0) #but at the species level, we observe a high positive relationship so the corrected shifts did not change the pattern of range shift=> good
-
-#looking at the relationship with climate velocity
-#WARNING:here you need to adapt the code: if you look at the elevational range shift so you have to use EleVeloT in order to use the corresponding climate velocity
-par(mfrow=c(1,2))
-plot(SHIFT~velocity, xlab="SHIFT (raw)", ylab="Velocity",biov1)
-lm0=lm(SHIFT~velocity+I(velocity^2),biov1)
-summary(lm0)
-x1=seq(min(biov1$velocity,na.rm = T),max(biov1$velocity,na.rm = T),le=100)
-p1=predict(lm0,newdata=data.frame(velocity=x1),type="response")
-points(p1~x1,type="l",col=2,lwd=2)
-plot(SHIFT_cor~velocity, xlab="SHIFT (corrected)", ylab="Velocity",biov1)#the pattern is changing a lot
-lm0=lm(SHIFT_cor~velocity+I(velocity^2),biov1)
-summary(lm0)
-x1=seq(min(biov1$velocity,na.rm = T),max(biov1$velocity,na.rm = T),le=100)
-p1=predict(lm0,newdata=data.frame(velocity=x1),type="response")
-points(p1~x1,type="l",col=2,lwd=2)
-#we observed a relationship for the raw range shift (an unimodal relationship with higher shifts when absolute climate velocity increase).
-#for the range shift corrected by method, no relationship with climatic velocity is observed
-
-#looking at the relationship with lag
-par(mfrow=c(1,2))
-plot(lagC~velocity,biov1,main="corrected lag estimate")
-# Lag C2
-# When shift is in opposite sign of velocity, lag == velocity
-plot(lagC2~velocity,biov1,main="corrected lag estimate with correction for special case")
-#change more things than the above lag metrics, still the highly change are observed at extreme negative values
-
-plot(lag2~lagC2,biov1)
-lm0=lm(lag~lagC,biov1)
-summary(lm0) #we observe a high positive relationship so the corrected lag did not change the pattern of the observed lag=> good
-
-par(mfrow=c(1,2))
-plot(lag2~velocity,biov1)
-lm0=lm(lag2~velocity+I(velocity^2),biov1)
-summary(lm0) #significant; R2=46%
-x1=seq(min(biov1$velocity, na.rm = T),max(biov1$velocity, na.rm = T),le=100)
-p1=predict(lm0,newdata=data.frame(velocity=x1),type="response")
-points(p1~x1,type="l",col=2,lwd=2) #bimodal relationship
-
-plot(lagC2~velocity,biov1) 
-lm0=lm(lagC2~velocity+I(velocity^2),biov1)
-summary(lm0)#significant; R2=86
-x1=seq(min(biov1$velocity, na.rm = T),max(biov1$velocity, na.rm = T),le=100)
-p1=predict(lm0,newdata=data.frame(velocity=x1),type="response")
-points(p1~x1,type="l",col=2,lwd=2) #bimodal relationship
-
-
-```
 
 # All shifts vs same direction
 
 ```{r fig.height=10, fig.width=10}
 
 ggplot(biov1, aes(x = velocity, y = SHIFT))+
-    geom_point(aes(color = lag2), alpha = .1)+
-    scale_color_viridis_c()+
-    geom_smooth(method = "lm")+
-    theme_classic()+
-    facet_wrap(Param~Type+ECO, scales = "free")
+  geom_point(aes(color = lag2), alpha = .1)+
+  scale_color_viridis_c()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  facet_wrap(Param~Type+ECO)
 
 ggplot(biov1 %>%
-           filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg"), 
+         filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg"), 
        aes(x = abs(velocity), y = abs(SHIFT)))+
-    geom_point(aes(color = lag2), alpha = .1)+
-    scale_color_viridis_c()+
-    geom_smooth(method = "lm")+
-    theme_classic()+
-    facet_wrap(Param~Type+ECO, scales = "free")
+  geom_point(aes(color = lag2), alpha = .1)+
+  scale_color_viridis_c()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  facet_wrap(Param~Type+ECO)
 
-ggplot(biov1, aes(x = velocity, y = SHIFT_cor))+
-    geom_point(aes(color = lag2), alpha = .1)+
-    scale_color_viridis_c()+
-    geom_smooth(method = "lm")+
-    theme_classic()+
-    facet_wrap(Param~Type+ECO, scales = "free")
-
-ggplot(biov1 %>%
-           filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg"), 
-       aes(x = abs(velocity), y = abs(SHIFT_cor)))+
-    geom_point(aes(color = lag2), alpha = .1)+
-    scale_color_viridis_c()+
-    geom_smooth(method = "lm")+
-    theme_classic()+
-    facet_wrap(Param~Type+ECO, scales = "free")
 
 ```
 
 # Load genetic data
 
-Datasets used here:
+- mt and ms are unpublished Malin's data:
+These are mitocondrial (mt) or microsatelite (ms) data.
 
-- Pinsky, unpublished:
-**Microsatellites** and **mitochondrial DNA**
-Data for marine fishes.
+- gen_d is from De Kort et al 2021 
+Citation: *De Kort et al. 2021. Life history, climate and biogeography interactively affect worldwide genetic diversity of plant and animal populations. Nat Commun.*
+This is population-level data for plants and animals. Genetic diversity was estimated from expected heterozygosity. They AFLP and microsatelite data, applying a harmonization approach for comparing both data.
 
-- De Kort et al. 2021 Nat Comm:
-**Microsatellites** and **AFPL**
-Used **expected heterozygosity** as a metric of genetic diversity (GDP). It is directly related to effective population size. 
-Because GDP is very sensitive to marker type (e.g. GDP is restricted between 0 and 0.5 in AFLP markers and between 0 and 1 in microsatellite markers), GDP values from each marker type were standardized (mean = 0 and variance = 1) to make them comparable across studies. Standardized GDP values were then normalized as (GDP_scaled-min)/(max-min) to range from 0 to 1. 
-Data for: plant, amphibian, reptile, bird, mammal, and mollusc.
-
-- Lawrence et al. 2019 Sci Data: MacroPopGen database. 
-**Microsatellites**
-Site-level estimates of genetic diversity from **microsatellite** markers for vertebrate species (terrestrial vertebrates and freshwater fish) across North and South America.
-Used **FST** or **expected heterozygosity** as a metric of genetic diversity (GDP).
-Data for: amphibians, birds, fish [anadromous, brackish, catadromous, or freshwater], mammals, and reptiles.
-
-- Fonseca et al. 2023 Evo Letters:
-**Mitochondrial DNA** (for vertebrates, arachnids, and insects. Chloroplast DNA and **nucleotide diversity** (for plants). (π) was calculated to describe patterns of intraspecific genetic diversity.
-
-- Canteri et al. 2021 Ecography: (We wont use this data because it has no coordinates)
-**Mitochondrial DNA** (mtDNA) cytochrome b diversity. Measured genetic diversity at the species level with **nucleotide diversity**.
-Data for 1036 bird species. 
+- gen_lf is from Lawrence et al. 2019
+Citation: *Lawrence, Elizabeth R; N. Benavente, Javiera; Matte, Jean-Michel; Marin, Kia; Wells, Zachery; Bernos, Thaïs A.; et al. (2019). MacroPopGen Database: Geo-referenced population-specific microsatellite data across the American continents. figshare. Dataset.*
+This is population-level data using microsatellite data across the Americas. 
 
 
 ```{r gen_data, eval=FALSE}
 
-# Pinsky mtdna
-mt <- fread(here::here('Data/mtdna.csv'))
-mt$spp <- Clean_Names(mt$spp,
-                      return_gen_sps = TRUE)
+mt <- fread(here::here('Data/Old/mtdna.csv'))
+mt$spp <- Clean_Names(mt$spp)
 
-# Pinsky msat
-ms <- fread(here::here('Data/msat.csv'))
-ms$spp <- Clean_Names(ms$spp,
-                      return_gen_sps = TRUE)
+ms <- fread(here::here('Data/Old/msat.csv'))
+ms$spp <- Clean_Names(ms$spp)
 
-# De Kort et al. 2021
-gen_d <- fread(here::here('Data/Deposited_data_genetic_diversity_dekort2021.csv'))
+gen_d <- fread(here::here('Data/Old/Deposited_data_genetic_diversity_dekort2021.csv'))
 gen_d$spp <-  gsub("_"," ",gen_d$Species)
-gen_d$spp <- Clean_Names(gen_d$spp,
-                         return_gen_sps = TRUE)
+gen_d$spp <- Clean_Names(gen_d$spp)
 
-# Lawrence et al. 2019: MacroPopGen
-gen_lf <- read_excel(here::here("Data/MacroPopGen_Database_final-v0.2.xlsx"), sheet = "MacroPopGen_Database")
+gen_lf <- read_excel(here::here("Data/Old/MacroPopGen_Database_final-v0.2.xlsx"), sheet = "MacroPopGen_Database")
 gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
-gen_lf$spp <- Clean_Names(gen_lf$spp,
-                          return_gen_sps = TRUE)
+gen_lf$spp <- Clean_Names(gen_lf$spp)
 
-# Fonseca et al. 2023
-gen_fon <- fread(here::here("Data/Fonseca_etal_2023_EvoLetters.txt"))
-gen_fon$spp <- gen_fon$Species
-gen_fon$spp <-  gsub("-"," ",gen_fon$spp)
-gen_fon$spp <-  gsub("_"," ",gen_fon$spp)
-gen_fon$spp <- Clean_Names(gen_fon$spp,
-                           return_gen_sps = TRUE)
-
-
-# Phenotypic rates
-pheno <- fread(here::here('Data/PROCEEDv6_RatesDB.csv'))
-pheno$spp <- Clean_Names(pheno$sp_ncbi,
-                         return_gen_sps = TRUE)
-
-
-##############################
-# Remove species identified to the genus level or cf. species
-all_sps <- unique(c(gen_d$spp,gen_lf$spp,gen_fon$spp,mt$spp,ms$spp,pheno$spp))
-length(all_sps)
-
-spgen <- sapply(all_sps, function(x){
-    tmp. <- strsplit(x, " ")[[1]]
-    any(tmp. == "sp" | tmp. == "spp" | grepl("sp[.]",tmp.) | grepl("spp[.]",tmp.) | tmp. == "cf[.]" | tmp. == "cf" | length(tmp.) == 1 | length(tmp.) > 2)
-})
-spgen <- which(spgen)
-spgen <- all_sps[-spgen]
-all(spgen %in% all_sps)
-
-all_sps <- all_sps[which(all_sps %in% spgen)]
-length(all_sps) # N species after filtering species identified to the species level
-
-# filter each dataset
-gen_d <- gen_d[which(gen_d$spp %in% all_sps),]
-gen_lf <- gen_lf[which(gen_lf$spp %in% all_sps),]
-gen_fon <- gen_fon[which(gen_fon$spp %in% all_sps),]
-mt <- mt[which(mt$spp %in% all_sps),]
-ms <- ms[which(ms$spp %in% all_sps),]
-pheno <- pheno[which(pheno$spp %in% all_sps),]
-
+# De Kort
 length(unique(gen_d$spp)) # 714
-length(unique(gen_lf$spp)) # 877
-length(unique(gen_fon$spp)) # 35219
+
+# Lawrence et al.
+length(unique(gen_lf$spp)) # 895
+
+# Malin mithocondrial
 length(unique(mt$spp)) # 162
+
+# Malin microsatelites
 length(unique(ms$spp)) # 275
-length(unique(pheno$spp)) # 415
+
+# N species with gen data
+gen_sps <- unique(c(ms$spp,mt$spp,gen_lf$spp,gen_d$spp))
+length(gen_sps) # 1893
 
 ```
 
@@ -757,12 +633,12 @@ length(unique(pheno$spp)) # 415
 ```{r fixnames, eval=FALSE}
 
 # Species to find
-mycols <- c("reported_name_fixed","scientificName","kingdom","phylum","class","order","family","db_code")
-sps_accepted_names <- data.frame(matrix(ncol = length(mycols), nrow = length(unique(all_sps))))
-names(sps_accepted_names) <- mycols
+mycols <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+splist <- data.frame(matrix(ncol = length(mycols), nrow = length(unique(gen_sps))))
+names(splist) <- mycols
 
-sps_accepted_names$reported_name_fixed <- unique(all_sps)
-tofind_ <- sps_accepted_names[which(is.na(sps_accepted_names$scientificName)),]
+splist$reported_name_fixed <- unique(gen_sps)
+tofind_ <- splist[which(is.na(splist$scientificName)),]
 tofind_ <- unique(tofind_$reported_name_fixed)
 
 tofind <- data.frame(matrix(nrow = length(tofind_), ncol = 8))
@@ -773,68 +649,66 @@ tofind <- data.frame(species = tofind_, tofind)
 tofind <- tofind %>%
     mutate(across(everything(), as.character))
 
-
 # retrieve sp names
-sp_names_found <- Find_Sci_Names(sp_name = tofind$species)
+sp_names_found <- Find_Sci_Names(spnames = tofind$species)
 
-# ----------------
-#  Summary 
-# ----------------
-# 
-# N taxa:
-# 36697
-# N taxa found:
-# |db   |     N|
-# |:----|-----:|
-# |GBIF | 35903|
-# |ITIS |    76|
-# |NCBI |   278|
-# N taxa not found:
-# 440
+# Feed
+tofind <- tofind %>% 
+    rows_patch(sp_names_found, 
+               by = "species")
 
+gc()
 
-## Add found species names to the sps_accepted_names
+## Add found species names to the splist
+all(tofind$species %in% splist$reported_name_fixed)
 
-all(sp_names_found$requested_name %in% sps_accepted_names$reported_name_fixed)
-
-for(i in 1:length(sp_names_found$requested_name)){
-    tofill <- unique(which(sps_accepted_names$reported_name_fixed == sp_names_found$requested_name[i]))
-    sps_accepted_names$scientificName[tofill] <- sp_names_found$scientificName[i]
-    sps_accepted_names$kingdom[tofill] <- sp_names_found$kingdom[i]
-    sps_accepted_names$phylum[tofill] <-sp_names_found$phylum[i]
-    sps_accepted_names$class[tofill] <- sp_names_found$class[i]
-    sps_accepted_names$order[tofill] <- sp_names_found$order[i]
-    sps_accepted_names$family[tofill] <- sp_names_found$family[i]
-    sps_accepted_names$db[tofill] <- sp_names_found$db[i]
-    sps_accepted_names$db_code[tofill] <- sp_names_found$db_code[i]
-    sps_accepted_names$method[tofill] <- sp_names_found$method[i]
+if(any(is.na(tofind$scientificName))){
+    found <- tofind[-which(is.na(tofind$scientificName)),]
+} else {
+    found = tofind
 }
 
-sps_accepted_names$spp = sps_accepted_names$reported_name_fixed
+for(i in 1:length(found$species)){
+    tofill <- unique(which(splist$reported_name_fixed == found$species[i]))
+    splist$scientificName[tofill] <- found$scientificName[i]
+    splist$kingdom[tofill] <- found$kingdom[i]
+    splist$phylum[tofill] <-found$phylum[i]
+    splist$class[tofill] <- found$class[i]
+    splist$order[tofill] <- found$order[i]
+    splist$family[tofill] <- found$family[i]
+    splist$db[tofill] <- found$db[i]
+    splist$db_code[tofill] <- found$db_code[i]
+}
 
+splist$spp = splist$reported_name_fixed
 
-## Keep original taxa information for those species we could not find a name at GBIF
+# Keep original names for those species we could not find a name at GBIF
+pos <- which(is.na(splist$scientificName))
+splist$scientificName[pos] <- splist$spp[pos]
 
-pos <- which(is.na(sps_accepted_names$scientificName))
-sps_accepted_names$scientificName[pos] <- sps_accepted_names$spp[pos]
+any(!mt$spp %in% gen_sps)
+any(!mt$spp %in% splist$spp)
+
+any(!ms$spp %in% gen_sps)
+any(!ms$spp %in% splist$spp)
+
+any(!gen_d$spp %in% gen_sps)
+any(!gen_d$spp %in% splist$spp)
+
+any(!gen_lf$spp %in% gen_sps)
+any(!gen_lf$spp %in% splist$spp)
 
 for(i in 1:nrow(mt)){
-    mt$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == mt$spp[i])]
+    mt$spp_new[i] <- splist$scientificName[which(splist$spp == mt$spp[i])]
 }
 for(i in 1:nrow(ms)){
-    ms$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == ms$spp[i])]
+    ms$spp_new[i] <- splist$scientificName[which(splist$spp == ms$spp[i])]
 }
 for(i in 1:nrow(gen_d)){
-    gen_d$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == gen_d$spp[i])]
+    gen_d$spp_new[i] <- splist$scientificName[which(splist$spp == gen_d$spp[i])]
 }
 for(i in 1:nrow(gen_lf)){
-    gen_lf$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == gen_lf$spp[i])]
-}
-for(i in 1:nrow(gen_fon)){
-    gen_fon$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == gen_fon$spp[i])]
-}
-for(i in 1:nrow(gen_lf)){
-    pheno$spp_new[i] <- sps_accepted_names$scientificName[which(sps_accepted_names$spp == pheno$spp[i])]
+    gen_lf$spp_new[i] <- splist$scientificName[which(splist$spp == gen_lf$spp[i])]
 }
 
 write.csv(mt, 
@@ -845,23 +719,19 @@ write.csv(gen_d,
           here::here('Data/Deposited_data_genetic_diversity_dekort2021_harmo.csv'), row.names = FALSE)
 write.csv(gen_lf, 
           here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'), row.names = FALSE)
-write.csv(gen_fon, 
-          here::here('Data/Fonseca_etal_2023_EvoLetters_harmo.txt'), row.names = FALSE)
-write.csv(pheno, 
-          here::here('Data/PROCEEDv6_RatesDB_harmo.csv'), row.names = FALSE)
 
 ```
 
-# Load harmonized genetic data
+# Load harmonized genetic data 
 
 ```{r load_harmonized_gen}
 
-mt <- fread(here::here('Data/mtdna_harmo.csv'))
-ms <- fread(here::here('Data/msat_harmo.csv'))
-gen_d <- fread(here::here('Data/Deposited_data_genetic_diversity_dekort2021_harmo.csv'))
-gen_lf <- fread(here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'))
-gen_fon <- fread(here::here('Data/Fonseca_etal_2023_EvoLetters_harmo.txt'))
-pheno <- fread(here::here('Data/PROCEEDv6_RatesDB_harmo.csv'))
+mt <- fread(here::here('Data/Old/mtdna_harmo.csv'))
+ms <- fread(here::here('Data/Old/msat_harmo.csv'))
+gen_d <- fread(here::here('Data/Old/Deposited_data_genetic_diversity_dekort2021_harmo.csv'))
+gen_d$spp <-  gsub("_"," ",gen_d$Species)
+gen_lf <- fread(here::here('Data/Old/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'))
+gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
 
 ```
 
@@ -869,31 +739,39 @@ pheno <- fread(here::here('Data/PROCEEDv6_RatesDB_harmo.csv'))
 
 ```{r}
 
-# Gen
-gen_sps <- unique(c(mt$spp_new, ms$spp_new, gen_d$spp_new, gen_lf$spp_new, gen_lf$spp_new, gen_fon$spp_new))
+# update new names
+mt$spp <- mt$spp_new
+ms$spp <- ms$spp_new
+gen_d$spp <- gen_d$spp_new
+gen_lf$spp <- gen_lf$spp_new
 
-bsi_v1 <- intersect(biov1$spp, gen_sps)
+# N species with Gen data in bioshifts
+gen_sps <- unique(c(mt$spp, ms$spp, gen_d$spp, gen_lf$spp))
 
-# Break down
-tot1 <- data.frame(N_species_with_gen_data = length(gen_sps),
-                   v1_matches = length(bsi_v1))
-tot1
-# N_species_with_gen_data v1_matches
-#                    36016       3145
+length(which(gen_sps %in% unique(biov1$spp))) # 318
 
-# phenotypic
-phen_sps <- unique(pheno$spp_new)
-
-bsj_v1 <- intersect(biov1$spp, phen_sps)
-
-# Break down
-tot2 <- data.frame(N_species_with_pheno_data = length(phen_sps),
-                   v1_matches = length(bsj_v1))
-tot2
-#   N_species_with_pheno_data v1_matches
-#                       411        269
+# Malin's mt in bioshifts
+length(which(unique(mt$spp) %in% unique(biov1$spp))) # 32
+# Malin's ms in bioshifts
+length(which(unique(ms$spp) %in% unique(biov1$spp))) # 53
+# De Kort et al. in bioshifts
+length(which(unique(gen_d$spp) %in% unique(biov1$spp))) # 148
+# Lawrance et al. ms in bioshifts
+length(which(unique(gen_lf$spp) %in% unique(biov1$spp))) # 132
 
 ```
+## Filter species in Bioshifts
+```{r}
+
+gen_sps <- gen_sps[which(gen_sps %in% unique(biov1$spp))]
+
+mt <- mt %>% filter(spp %in% gen_sps)
+ms <- ms %>% filter(spp %in% gen_sps)
+gen_d <- gen_d %>% filter(spp %in% gen_sps)
+gen_lf <- gen_lf %>% filter(spp %in% gen_sps)
+
+```
+
 
 ## Explore distribution
 
@@ -925,11 +803,6 @@ ggplot(gen_lf, aes(as.numeric(He))) +
     geom_histogram()+
     ggtitle("Lawrence & Fraser Microsatellite")
 
-# Fonseca et al.
-ggplot(gen_fon, aes(as.numeric(Nucleotide_diversity))) +
-    geom_histogram()+
-    ggtitle("Fonseca et al. Mitochondrial DNA")
-
 ```
 
 # Create a single genetic diversity dataset
@@ -941,11 +814,11 @@ mt_sub <- mt  %>%
     mutate(long = as.numeric(lon),
            lat = as.numeric(lat),
            N = as.numeric(n), # Sample size
-           Marker = "Mitochondrial DNA")  %>%
+           Marker = "Mitochondrial")  %>%
     dplyr::filter(!is.na(He) | !He==0) %>%
     dplyr::select(spp, He, long, lat, Marker)
 mt_sub$Source = "Malin"
-# mt_sub$Het_type = "He"
+mt_sub$Het_type = "He"
 
 ms_sub <- ms %>%
     mutate(long = as.numeric(lon),
@@ -955,7 +828,7 @@ ms_sub <- ms %>%
     dplyr::filter(!is.na(He) | !He==0) %>%
     dplyr::select(spp, He, long, lat, Marker)
 ms_sub$Source = "Malin"
-# ms_sub$Het_type = "He"
+ms_sub$Het_type = "He"
 
 ###################
 # De Kort
@@ -973,7 +846,7 @@ ms_sub$Source = "Malin"
 gen_d_sub <- gen_d %>%
     mutate(long = as.numeric(LONGITUDE),
            lat = as.numeric(LATITUDE),
-           spp = spp_new, 
+           spp = spp, 
            He = as.numeric(GDp),
            N = as.numeric(SampleSize), # Sample size
            Marker = case_when(
@@ -985,7 +858,7 @@ gen_d_sub <- gen_d %>%
     dplyr::filter(!(Marker == "AFLP" & He > .5)) %>% # AFLPs > 0.5 are errors
     dplyr::select(spp, He, long, lat, Marker)
 gen_d_sub$Source = "De Kort"
-# gen_d_sub$Het_type = "He"
+gen_d_sub$Het_type = "He"
 
 # How DeKort calculated the normalized version of GDp
 # gen_d_sub$He_harm <- NA
@@ -999,67 +872,48 @@ gen_d_sub$Source = "De Kort"
 
 ###################
 # Lawrence & Fraser
-gen_lf$He <- as.numeric(gen_lf$He)
-gen_lf$Ho <- as.numeric(gen_lf$Ho)
-
 pos <- which(is.na(gen_lf$He))
 gen_lf$He_new <- gen_lf$He
 gen_lf$He_new[pos] <- gen_lf$Ho[pos]
-# gen_lf$Het_type = "He"
-# gen_lf$Het_type[pos] = "Ho"
+gen_lf$Het_type = "He"
+gen_lf$Het_type[pos] = "Ho"
 
 gen_lf_sub <- gen_lf %>%
     mutate(long = as.numeric(Long),
            lat = as.numeric(Lat),
            He = as.numeric(He_new),
-           spp = spp_new,
+           spp = spp,
            N = as.numeric(n), # Sample size
            Marker = "Microsatellite") %>% 
     dplyr::filter(!is.na(He) | !He==0) %>%
-    dplyr::select(spp, He, long, lat, Marker, 
-                  # Het_type
-                  ) 
+    dplyr::select(spp, He, long, lat, Marker, Het_type) 
 gen_lf_sub$Source = "Lawrence & Fraser"
-
-###################
-# Fonseca et al.
-gen_fon_sub <- gen_fon  %>%
-    mutate(long = as.numeric(Longitude),
-           lat = as.numeric(Latitude),
-           He = Nucleotide_diversity)  %>%
-    dplyr::filter(!is.na(Nucleotide_diversity) | !Nucleotide_diversity==0) %>%
-    dplyr::select(spp, He, long, lat)
-gen_fon_sub$Source = "Fonseca"
-gen_fon_sub$Marker = "Mitochondrial DNA"
 
 ###################
 # Group all
 gen_div <- rbind(mt_sub %>% dplyr::select(names(mt_sub)), 
                  ms_sub %>% dplyr::select(names(mt_sub)),
                  gen_d_sub %>% dplyr::select(names(mt_sub)),
-                 gen_lf_sub %>% dplyr::select(names(mt_sub)),
-                 gen_fon_sub %>% dplyr::select(names(mt_sub)))
+                 gen_lf_sub %>% dplyr::select(names(mt_sub)))
 gen_div <- na.omit(gen_div)
 
 gen_div$spp <- as.factor(gen_div$spp)
 gen_div$Marker <- as.factor(gen_div$Marker)
 gen_div$Source <- as.factor(gen_div$Source)
 
+length(unique(gen_div$spp))
+
 ```
 
 # Harmonize genetic data
 
--   **He_harm:** transformation used by DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
-
-1)  scale values at each marker type
-2)  standardize (x - min)/(max-min)
-
--   **He_harm2:** transformation suggested by Malin. Applies the function transform01 before a logit transformation.
-
-1)  transform01 />/> Moves He values slightly inward so that a logit transformation is possible.
-2)  apply logit transformation
-
--   **He_harm3**: He_harm2 centered in zero.
+- He_harm = transformation used in DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
+1) scale values at each marker type
+2) standardize (x - min)/(max-min)
+- He_harm2 = transformation suggested by Malin. Applies the function transform01 before a logit transformation. 
+1) transform01 >> The only intent of this function is to move slightly inward the values of He so that it allows applying logit transformation.
+2) apply logit transformation
+- He_harm3 = He_harm2 centered in zero. 
 
 ```{r}
 
@@ -1079,8 +933,7 @@ for(i in 1:length(m)){
     gen_div$He_harm3[pos] <- scale(gen_div$He_harm2[pos])
 }
 
-# Filter the species in Bioshifts
-gen_div <- gen_div %>% dplyr::filter(spp %in% unique(biov1$spp))
+length(unique(gen_div$spp))
 
 # remove outliers
 gen_metrics <- c("He_harm","He_harm2","He_harm3")
@@ -1097,14 +950,14 @@ for (i in 1:length(gen_metrics)){
     gen_div <- subset(gen_div, my_gem > Lower & my_gem < Upper)
 }
 
+length(unique(gen_div$spp))
 
 ```
 
-## Avg by location
-
+## Avg by location 
 We averaged genetic diversity by location (same species, in the same XY coordinates)
-
 ```{r}
+
 # How many species with >1 gen div measurements at the same site?
 # Check how many obs per site and marker type exist
 N_obs <- gen_div %>%
@@ -1140,12 +993,13 @@ gen_div <- gen_div %>%
 
 unique(gen_div$Source)
 unique(gen_div$Marker)
+length(unique(gen_div$spp))
 
 ```
 
 ## Which species?
 
-```{r fig.height=7, fig.width=5}
+```{r fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
 
 gen_div <- merge(gen_div, 
                  splist[,-7],
@@ -1190,6 +1044,7 @@ ggpairs(gen_div,
             alpha = 0.5))
 ```
 
+
 ```{r message=FALSE, fig.width=10,fig.height=3}
 
 to_plot <- gen_div %>%
@@ -1207,9 +1062,7 @@ ggplot(to_plot, aes(value, fill = Group, color = Group))+
 ```
 
 ## High He with latitude?
-
 ### Absolution latitude
-
 ```{r}
 toplot <- gen_div %>%
     mutate(Hemisphere = ifelse(lat<0, "South", "North"),
@@ -1220,226 +1073,176 @@ toplot <- gen_div %>%
 ggplot(toplot, aes(x = lat_abs, y = He_harm, color = Group))+
     geom_point(alpha = .1)+
     stat_smooth(method = "lm")+
-    facet_wrap(.~Group,scales = "free")
+    facet_wrap(.~Group)
 
 mod1 <- lm(He_harm~lat*Group, toplot)
 emtrends(mod1, ~ lat*Group, var = "lat")
-
 ```
 
 ## Spatial pattern
 
 ```{r fig.width=10, fig.height=5}
 
-mundi <- terra::vect(rnaturalearth::ne_coastline(scale = 110, returnclass = "sp"))
+mundi <- rnaturalearth::ne_coastline(scale = 110, returnclass = "sv")
+mundi <- crop(mundi, ext(c(-180,180,-60,90)))
 
 # get vect gen div
-vect_div <- terra::vect(gen_div,geom=c("long","lat"),crs=crs(mundi))
+vect_div <- terra::vect(gen_div %>%
+                          dplyr::filter(spp %in% biov1$sp_name_std_v1),
+                        geom=c("long","lat"),crs=crs(mundi))
 
 # get vect centroids bioshifts
 vect_biov1 <- terra::vect(biov1 %>%
-                              filter(spp %in% gen_div$spp),
+                            filter(spp %in% gen_div$spp),
                           geom=c("centroid.x","centroid.y"),crs=crs(mundi))
 
 # get raster bioshifts shp files study areas
 get_raster_bioshifts = "NO"
 if(get_raster_bioshifts=="YES"){
-    my_ext = terra::ext(mundi)
-    my_crs = crs(mundi)
-    rast_biov1 <- terra::rast(my_ext, crs = my_crs, res = 0.5)
-    values(rast_biov1) <- 0
-    
-    fgdb <- "C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/ShapefilesBioShiftsv3"
-    fc_list <- list.files(fgdb,pattern = ".shp")
-    fc_list <- gsub(".shp","",fc_list)
-    fc_list <- fc_list[which(fc_list %in% unique(as.data.frame(vect_biov1)$ID))]
-    
-    for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
-        tmp = terra::vect(here::here(fgdb, paste0(fc_list[i],".shp")))
-        tmp = terra::cells(rast_biov1,tmp)
-        tmp_cell = tmp[,2]
-        tmp_vals = rast_biov1[tmp_cell][,1]
-        rast_biov1[tmp_cell] = tmp_vals+1
-    }
-    names(rast_biov1) <- "SA"
-    rast_biov1[rast_biov1==0] <- NA
-    
-    writeRaster(rast_biov1, here::here("Data/raster_bioshifts_SA.tif"), overwrite = TRUE)
-    
+  my_ext = terra::ext(mundi)
+  my_crs = crs(mundi)
+  rast_biov1 <- terra::rast(my_ext, crs = my_crs, res = 0.5)
+  values(rast_biov1) <- 0
+  
+  fgdb <- "C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/Study_Areas_v1/Study_Areas.gdb"
+  fc_list <- terra::vector_layers(fgdb)
+  fc_list <- fc_list[which(fc_list %in% unique(as.data.frame(vect_biov1)$ID))]
+  
+  for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
+    tmp = terra::vect(fgdb, layer = fc_list[i])
+    tmp = terra::cells(rast_biov1,tmp)
+    tmp_cell = tmp[,2]
+    tmp_vals = rast_biov1[tmp_cell][,1]
+    rast_biov1[tmp_cell] = tmp_vals+1
+  }
+  names(rast_biov1) <- "SA"
+  rast_biov1[rast_biov1==0] <- NA
+  
+  writeRaster(rast_biov1, here::here("Data/raster_bioshifts_SA.tif"), overwrite = TRUE)
+  
 } else {
-    rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA.tif"))
+  rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA.tif"))
+  rast_biov1 <- crop(rast_biov1, ext(mundi))
 }
 
 values_biov1 <- na.omit(values(rast_biov1))
 
-ggplot()+
-    ggtitle("Genetic diversity data")+
-    geom_spatvector(data=mundi)+
-    geom_spatvector(data=vect_div,aes(color = Marker))+
-    theme_blank()
+plot_data <- gen_div %>%
+  dplyr::filter(spp %in% biov1$sp_name_std_v1) %>%
+  mutate(x = round(long,3),
+         y = round(lat,3))
 
-ggplot()+
-    ggtitle("Genetic diversity data")+
-    geom_spatvector(data=mundi)+
-    geom_spatvector(data=vect_div,aes(color = Source))+
-    theme_blank()
+gen_fig <- ggplot()+
+  geom_spatvector(data=mundi)+
+  geom_hex(data=plot_data,
+           binwidth = c(4, 4),
+           aes(x=x, y=y))+
+  scale_fill_continuous(trans="log", 
+                        alpha=.7,
+                        labels=function(x) round(x,0),
+                        type = "viridis", name = "Species with\ngenetic data")+
+  theme_void()
 
-ggplot()+
-    ggtitle("Bioshifts data \n(Centroid of study areas)")+
-    geom_spatvector(data=mundi)+
-    geom_spatvector(data=vect_biov1, aes(color = ECO))+
-    theme_blank()
+gen_fig +
+  ggtitle("Genetic diversity data")
 
-ggplot()+
-    ggtitle("Bioshifts data \n(Overlap study areas)")+
-    geom_spatraster(data=rast_biov1)+
-    scale_fill_whitebox_b(
-        palette = "muted",
-        na.value = "white",
-        breaks = seq(min(values_biov1), max(values_biov1), 1))+
-    geom_spatvector(data=vect_biov1, aes(color = ECO))+
-    geom_spatvector(data=mundi)+
-    theme_blank()
+bio_fig <- ggplot() +
+  geom_spatraster(data=rast_biov1)+
+  scale_fill_whitebox_c(
+    name = "BioShifts\nstudy areas",
+    palette = "viridi",
+    alpha=.7,
+    na.value = "white",
+    trans="log", 
+    labels=function(x) round(x,0),
+    breaks = seq(min(values_biov1), max(values_biov1), length.out = 5))+
+  geom_spatvector(data=mundi)+
+  theme_void()
 
+bio_fig +
+  ggtitle("Bioshifts study areas")
 
-```
+bio_gen_fig <- bio_fig +
+  geom_spatvector(data=vect_div, alpha = .3)
 
-# Phenotypic rates
+bio_gen_fig +
+  ggtitle("Genetic diversity data & BioShifts study areas")
 
-```{r message=FALSE}
-pheno_rate <- pheno %>%
-    mutate(long = as.numeric(sample1.longitude),
-           lat = as.numeric(sample1.latitude),
-           trait1 = as.numeric(mean1),
-           trait2 = as.numeric(mean2),
-           spp = spp_new,
-           Trait = trait_type, 
-           Years = as.numeric(years),
-           Gen = as.numeric(generations)) %>% 
-    dplyr::select(spp, long, lat, Trait, trait1, trait2, Years, Gen) %>%
-    dplyr::filter(!is.na(trait1) & !is.na(trait2))
-pheno_rate$Source = "PROCEED"
-```
-
-## Calculate rate & harmozine
-
-```{r message=FALSE}
-for(i in 1:nrow(pheno_rate)){
-    sppi <- pheno_rate$spp[i]
-    traiti <- pheno_rate$Trait[i]
-    pos_spp_trait_i <- which(pheno_rate$spp == sppi & pheno_rate$Trait == traiti)
-    pheno_rate$PR1[i] <- (pheno_rate$trait2[i] - pheno_rate$trait1[i]) / mean(c(pheno_rate$trait2[pos_spp_trait_i], pheno_rate$trait1[pos_spp_trait_i])) * pheno_rate$Years[i]
-    pheno_rate$PR2[i] <- (pheno_rate$trait2[i] - pheno_rate$trait1[i]) / sqrt(mean(c(pheno_rate$trait2[pos_spp_trait_i], pheno_rate$trait1[pos_spp_trait_i])))^2 * pheno_rate$Years[i]
-}
-
-pheno_rate$PR_harm <- NA
-
-m <- unique(pheno_rate$Trait)
-for(i in 1:length(m)){
-    pos <- which(pheno_rate$Trait == m[i])
-    # DeKort
-    p <- scale(pheno_rate$PR1[pos])
-    p <- (p - min(p, na.rm = T))/(max(p, na.rm = T)-min(p, na.rm = T))
-    pheno_rate$PR_harm[pos] <-  p
-}
-
-# gen_div %>%
-# group_by(spp) %>%
-# tally() %>%
-# summary()
+ggsave(filename = here::here("Figs/Map_pop-level_GD.pdf"), 
+       plot = bio_gen_fig, 
+       width = 12,
+       height = 5,
+       device = "pdf", 
+       units = "in")
 
 ```
 
-## Distribution of pheno rates
 
-```{r message=FALSE}
-# Look into phenotic rates
-ggplot(pheno_rate, aes(PR1)) +
-    geom_histogram() +
-    facet_wrap(Trait~., scales = "free") +
-    ggtitle("Raw data")
+```{r fig.width=10, fig.height=8}
 
-ggplot(pheno_rate, aes(PR_harm)) +
-    geom_histogram() +
-    facet_wrap(Trait~., scales = "free") +
-    ggtitle("Harmonization following De Kort")
+bio_gen_fig2 <- ggpubr::ggarrange(gen_fig,
+                                  bio_fig,
+                                  labels = c("A", "B"),
+                                  ncol=1)
+
+bio_gen_fig2
+
+ggsave(filename = here::here("Figs/Map_pop-level_GD2.pdf"), 
+       plot = bio_gen_fig2, 
+       width = 10,
+       height = 8,
+       device = "pdf", 
+       units = "in")
+
 ```
+
+
+
 
 # Merge genetic and bioshifts data
-
-We tried several methods for merging genetic data and bioshifts.
-
--   Method 1: Normal merge Uses the merge function to aggregate bioshifts and gen div data. This creates multiple false duplicates.
-
--   Method 2: Median He per species. This ignores spatial proximity of He values to range shift values.
-
--   Method 3: Median He per Param & species Use lower latitude TE and higher latitude as LE (North Hemisphere). Although this collects He values based on latitude, the proximity of He to the study areas where range shifts were observed is ignored.
-
--   Method 4: Distance based approach. Calculates distance weighted mean of He to the centroid of the study area.
-
--   Method 5: Location based approach. Get the closest He to the centroid (for centroid shift), to the max latitude (for LE shift, at the North hemisphere), and to the min latitude (for TE shift, at the North hemisphere) of the study area.
-
-We decided that Method 5 is the best one.
+We tried several methods for merging genetic data and bioshifts. We decided that Method 5 is the best one.
 
 # Method 1 - Normal merge
-
 This is not the correct way to merge because it creates multiple false duplicates.
-
 ```{r eval=FALSE, include=FALSE}
 
-gen_data_v1 <- append(list(gen_div), 
-                      list(biov1)) %>% reduce(full_join, by='spp')
-gen_data_v1 <- gen_data_v1 %>% 
-    dplyr::filter(!is.na(He), !is.na(SHIFT))
+gen_data_v1 <- append(list(gen_div), list(biov1[,-which(names(biov1) %in% names(gen_div[,-1]))])) %>% reduce(full_join, by='spp')
+gen_data_v1 <- gen_data_v1 %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
 
 # N species
-length(unique(gen_data_v1$spp))
-
-# Use only plus plus or minus minus
-table(gen_data_v1$shift_vel_sign)
-
-gen_data_v1 <- gen_data_v1 %>% dplyr::filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
-
-gen_data_v1
-# N species
-length(unique(gen_data_v1$spp))
-
-# N obs per species
-# View(table(gen_data_v1$spp))
+length(unique(gen_data_v1$spp)) # 309
 
 ```
 
 # Method 2 - Median He per species
-
 This ignores spatial proximity of He values to range shift values.
-
-```{r }
+```{r eval=FALSE, include=FALSE}
 
 gen_div_avg <- gen_div %>%
     group_by(spp) %>%
     dplyr::summarise(N = length(spp),
-                     He_harm = median(He_harm),
-                     He_harm2 = median(He_harm2),
-                     He_harm3 = median(He_harm3)) 
+                     He = median(He_harm)) 
 
 #merge all data frames in list
 gen_data_v1_avg <- append(list(gen_div_avg), list(biov1)) %>% reduce(full_join, by='spp')
-gen_data_v1_avg <- gen_data_v1_avg %>% dplyr::filter(!is.na(He_harm), !is.na(SHIFT))
+gen_data_v1_avg <- gen_data_v1_avg %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1_avg$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_avg$shift_vel_sign)
+
+gen_data_v1_avg <- gen_data_v1_avg %>% dplyr::filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
 
 # N species
 length(unique(gen_data_v1_avg$spp))
 
 ```
 
-## Save data
-
-```{r}
-write.csv(gen_data_v1_avg,here::here("Data/gen_data_final_m2.csv"),row.names = FALSE)
-```
-
 # Method 3 - Median He per Param & species
 
-Use lower latitude TE and higher latitude as LE (North Hemisphere)./
+Use lower latitude TE and higher latitude as LE (North Hemisphere).  
 Although this collects He values based on latitude, the proximity of He to the study areas where range shifts were observed is ignored.
 
 ```{r eval=FALSE, include=FALSE, error=FALSE}
@@ -1475,7 +1278,7 @@ length(unique(gen_data_v1_avg_2$spp))
 
 # Method 4 - Based on distance
 
-Calculate distance weighted mean He for each species in the bioshifts database./
+Calculate distance weighted mean He for each species in the bioshifts database.  
 This method collects He values more close to the centroid of the study area.
 
 ```{r eval=FALSE, include=FALSE, message=FALSE}
@@ -1544,6 +1347,7 @@ gen_data_v1_dist <- gen_data_v1_dist %>% dplyr::filter(shift_vel_sign == "pospos
 length(unique(gen_data_v1_dist$spp))
 
 ```
+
 
 # Method 5 - Based on location
 
@@ -1631,156 +1435,21 @@ gen_data_v1_dist2 <- gen_data_v1_dist2 %>% dplyr::filter(!is.na(He), !is.na(SHIF
 
 ```
 
-## Save data
-
+# Save data
 ```{r}
-write.csv(gen_data_v1_dist2,here::here("Data/gen_data_final_m5.csv"),row.names = FALSE)
-```
-
-# Method 5 - Based on location (Fonseca)
-
-Get the closest He to the centroid (for O), to the max latitude (for LE, at the North hemisphere), and to the min latitude (for TE, at the North hemisphere) of the study area.
-
-```{r message=FALSE, warning=FALSE, results='hide'}
-
-# sp list
-m <- unique(biov1$spp[which(biov1$spp %in% gen_fon_sub$spp)])
-
-gen_data_v1_dist2_fon <- data.frame()
-
-# sp2go="Alces alces"
-# sp2go="Sylvia atricapilla"
-for(i in 1:length(m)){ cat(i, "from", length(m), "\r")
-    sp2go <- m[i]
-    
-    # subset genetic data
-    sub_gen <- subset(gen_fon_sub, spp == sp2go)
-    sub_gen_v <- terra::vect(sub_gen, 
-                             geom=c("long", "lat"), 
-                             crs = "+proj=longlat +datum=WGS84 +no_defs")
-    
-    # subset bioshifts data
-    sub_bio <- subset(biov1, spp == sp2go)
-    
-    # study areas for species i
-    areas <- unique(sub_bio$ID)
-    
-    gen_data_v1_dist2_fon_tmp <- data.frame()
-    
-    # get genetic data for species i in each study area
-    for(j in 1:nrow(sub_bio)){
-        
-        # bioshifts in study area j and range pos r
-        sub_bio_area_j_tmp <- sub_bio[j,]
-        
-        range_pos2go <- sub_bio_area_j_tmp$Param
-        
-        coord_names <- NA
-        coord_names <- if(range_pos2go == "O"){ c("centroid.x", "centroid.y") } else {coord_names}
-        coord_names <- if(range_pos2go == "LE" & sub_bio_area_j_tmp$centroid.y > 0){ c("max_lat.x", "max_lat.y") } else {coord_names}
-        coord_names <- if(range_pos2go == "LE" & sub_bio_area_j_tmp$centroid.y < 0){ c("min_lat.x", "min_lat.y") } else {coord_names}
-        coord_names <- if(range_pos2go == "TE" & sub_bio_area_j_tmp$centroid.y < 0){ c("max_lat.x", "max_lat.y") } else {coord_names}
-        coord_names <- if(range_pos2go == "TE" & sub_bio_area_j_tmp$centroid.y > 0){ c("min_lat.x", "min_lat.y") } else {coord_names}
-        
-        sub_bio_area_j_v = data.frame(sub_bio_area_j_tmp)[,coord_names]
-        names(sub_bio_area_j_v) <- c("long", "lat")
-        
-        sub_bio_area_j_v <- terra::vect(unique(sub_bio_area_j_v[,c("long", "lat")]), 
-                                        geom=c("long", "lat"), 
-                                        crs = "+proj=longlat +datum=WGS84 +no_defs")
-        
-        # plot(terra::vect(rbind(sub_gen[,c("long", "lat")], sub_bio_area_j_tmp[,c("long", "lat")]),
-        #  geom=c("long", "lat"),
-        #  crs = "+proj=longlat +datum=WGS84 +no_defs"))
-        # plot(sub_bio_area_j_v, col = "red", add=T)
-        
-        dists <- terra::distance(sub_bio_area_j_v, sub_gen_v)[1,]
-        dists_order <- order(dists)[1]
-        min_dist <- dists[dists_order] # distance to closest
-        
-        # the closest
-        sub_gen_tmp <- sub_gen[dists_order,]
-        sub_gen_tmp$min_dist <- min_dist
-        
-        # weighted distance
-        sub_gen_tmp$He_w <- weighted.mean(sub_gen$He, 1/(dists^2)) 
-        
-        gen_data_v1_dist2_fon_tmp <- rbind(gen_data_v1_dist2_fon_tmp,
-                                       append(list(sub_gen_tmp), 
-                                              list(sub_bio_area_j_tmp)) %>%
-                                           reduce(full_join, by="spp"))
-        
-    }
-    
-    gen_data_v1_dist2_fon <- rbind(gen_data_v1_dist2_fon,
-                               gen_data_v1_dist2_fon_tmp)
-    
-}
-
-gen_data_v1_dist2_fon <- gen_data_v1_dist2_fon %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
-
-# gen_data_v1_dist2_fon <- read.csv(here::here("Data/gen_data_v1_dist2_fon.csv"))
-```
-
-## Save data
-
-```{r}
-write.csv(gen_data_v1_dist2_fon,here::here("Data/gen_data_v1_dist2_fon.csv"),row.names = FALSE)
+write.csv(gen_data_v1_dist2,here::here("Data/gen_data_final_distance_pop-level.csv"),row.names = FALSE)
 ```
 
 # Explore data
 
-```{r}
-
-# n range shifts
-nrow(gen_data_v1_dist2)
-
-# n genetic diversity measurements (after averaging by location)
-dim(gen_div)
-
-```
-
 ## The closest He vs distance weighted He
-
 ```{r}
 plot(gen_data_v1_dist2$He_harm,gen_data_v1_dist2$He_harm_w)
 plot(gen_data_v1_dist2$He_harm2,gen_data_v1_dist2$He_harm2_w)
 plot(gen_data_v1_dist2$He_harm3,gen_data_v1_dist2$He_harm3_w)
 ```
 
-## Which species?
-
-```{r fig.width=5,fig.height=5}
-
-# N species
-length(unique(gen_data_v1_dist2$spp))
-
-# Use only plus plus or minus minus
-table(gen_data_v1_dist2$shift_vel_sign)
-
-# N species
-length(unique(gen_data_v1_dist2$spp))
-
-toplot_ <- gen_data_v1_dist2 %>%
-    group_by(Group) %>%
-    dplyr::summarise(Species = length(unique(spp)),
-                     Obs = length(spp))
-
-toplot_ <- reshape2::melt(toplot_)
-
-ggplot(toplot_, aes(x = Group, y = value))+
-    geom_bar(stat="identity")+
-    geom_text(aes(y=value, label=value), 
-              hjust = -.1, vjust=0.2, size=3, 
-              position = position_dodge(0.9))+
-    theme_classic()+
-    coord_flip()+
-    facet_wrap(.~variable, scales = "free", ncol = 1)
-
-```
-
-## Compare lag values of the full bioshifts vs the subset (genetic) dataset
-
+## Compare shift values of the full bioshifts vs the subset (genetic) dataset
 ```{r}
 
 toplot <- rbind(
@@ -1790,16 +1459,6 @@ toplot <- rbind(
     data.frame(dataset = "Subset", 
                lags = gen_data_v1_dist2$lag2, 
                shifts = gen_data_v1_dist2$SHIFT))
-
-# lags
-ggplot(toplot, aes(x = dataset, y=lags, fill = dataset, color = dataset))+
-    geom_boxplot(alpha = .5, outlier.shape = NA)+
-    scale_y_continuous(limits = quantile(toplot$lags, c(0.1, 0.9), na.rm = T))
-
-tapply(toplot$lags, toplot$dataset, summary)
-
-mod1 <- aov(lags~dataset, data = toplot)
-summary(mod1)
 
 # shift
 ggplot(toplot, aes(x = dataset, y=shifts, fill = dataset, color = dataset))+
@@ -1813,834 +1472,19 @@ summary(mod1)
 
 ```
 
-There are difference in mean values of lags, but no difference in mean shift values, between the full and subset datasets.
+There are difference in mean values of lags, but no difference in mean shift values, between the full and subset datasets. 
 
-## Lag
 
-### General pattern
-
-#### He_harm
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3, aes(color = SHIFT_abs))+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-#### He_harm2
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-#### He_harm3
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-### By Param
-
-#### He_harm
-
-```{r fig.width=10, fig.height=4}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-```
-
-### By Group
-
-#### He_harm
-
-```{r fig.width=10, fig.height=10}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-```
-
-### By Group /* Param
-
-#### He_harm
-
-```{r fig.width=10, fig.height=15}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-```
-
-## Lag 2
-
-### General pattern
-
-#### He_harm
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-#### He_harm2
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-#### He_harm3
-
-```{r fig.width=7, fig.height=5}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-```
-
-### By Param
-
-#### He_harm
-
-```{r fig.width=10, fig.height=4}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-```
-
-### By Group
-
-#### He_harm
-
-```{r fig.width=10, fig.height=4}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=4}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-```
-
-### By Group /* Param
-
-#### He_harm
-
-```{r fig.width=10, fig.height=10}
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
-
-```
-
-#### He_harm2
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
-```
-
-#### He_harm3
-
-```{r fig.width=10, fig.height=10}
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = lagC2, color = SHIFT_abs))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("lagC (Velocity - Shift)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-```
 
 ## SHIFT
-
 ### General pattern
-
 #### He_harm
-
-```{r fig.width=7, fig.height=5}
-
-# gen_data_v1_dist2 <- gen_data_v1_dist2_fon
-# gen_data_v1_dist2$He_harm <- gen_data_v1_dist2$He
+```{r fig.height=4, fig.width=5, message=FALSE, warning=FALSE, message=FALSE, warning=FALSE}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+    ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
@@ -2651,29 +1495,16 @@ gen_data_v1_dist2 %>%
     stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
                 aes(by=as.factor(Article_ID)), color = "black")
 
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
 
 ```
 
 #### He_harm2
-
-```{r fig.width=7, fig.height=5}
+```{r fig.width=5, message=FALSE, warning=FALSE, fig.height=4}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+    ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
@@ -2684,44 +1515,17 @@ gen_data_v1_dist2 %>%
     stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
                 aes(by=as.factor(Article_ID)), color = "black")
 
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
 
 ```
 
 #### He_harm3
-
-```{r fig.width=7, fig.height=5}
+```{r fig.width=5, message=FALSE, warning=FALSE, fig.height=4}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
     scale_color_viridis_c(direction = -1)+
@@ -2736,28 +1540,13 @@ gen_data_v1_dist2 %>%
 ### By Param
 
 #### He_harm
-
-```{r fig.width=10, fig.height=4}
+```{r fig.width=10, fig.height=4, message=FALSE, warning=FALSE}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
     scale_color_viridis_c(direction = -1)+
@@ -2771,11 +1560,11 @@ gen_data_v1_dist2 %>%
 ```
 
 #### He_harm2
-
-```{r fig.width=10, fig.height=4}
+```{r fig.width=10, fig.height=4, message=FALSE, warning=FALSE}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = log1p(sqrt(abs(SHIFT_cor))), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
@@ -2787,27 +1576,14 @@ gen_data_v1_dist2 %>%
                 aes(by=as.factor(Article_ID)), color = "black")+
     facet_wrap(.~Param, scales = "free", ncol = 3)
 
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = log1p(sqrt(abs(SHIFT_cor))), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
 ```
 
 #### He_harm3
-
 ```{r fig.width=10, fig.height=4}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
@@ -2819,46 +1595,18 @@ gen_data_v1_dist2 %>%
                 aes(by=as.factor(Article_ID)), color = "black")+
     facet_wrap(.~Param, scales = "free", ncol = 3)
 
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Param, scales = "free", ncol = 3)
 ```
 
 ### By Group
 
 #### He_harm
-
-```{r fig.width=10, fig.height=4}
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
     scale_color_viridis_c(direction = -1)+
@@ -2872,26 +1620,12 @@ gen_data_v1_dist2 %>%
 ```
 
 #### He_harm2
-
-```{r fig.width=10, fig.height=4}
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
     scale_color_viridis_c(direction = -1)+
@@ -2904,26 +1638,12 @@ gen_data_v1_dist2 %>%
 ```
 
 #### He_harm3
-
-```{r fig.width=10, fig.height=4}
+```{r fig.width=10, fig.height=10}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(.~Group, scales = "free", ncol = 3)
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
     scale_color_viridis_c(direction = -1)+
@@ -2935,15 +1655,15 @@ gen_data_v1_dist2 %>%
     facet_wrap(.~Group, scales = "free", ncol = 3)
 ```
 
-### By Group /* Param
+### By Group * Param
 
 #### He_harm
-
-```{r fig.width=10, fig.height=10}
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
 
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm, y = (abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm)")+
     ylab("Range shift (km/year)") +
@@ -2953,31 +1673,17 @@ gen_data_v1_dist2 %>%
     geom_smooth(method = "lm", color = "black", size=1)+
     stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
                 aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
+    facet_wrap(Group~Param, scales = "free")
 
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm, y = (abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
 
 ```
 
 #### He_harm2
-
-```{r fig.width=10, fig.height=10}
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
@@ -2987,29 +1693,15 @@ gen_data_v1_dist2 %>%
     geom_smooth(method = "lm", color = "black", size=1)+
     stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
                 aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm2, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_wrap(Param~Group, scales = "free")
+    facet_wrap(Group~Param, scales = "free")
 ```
 
 #### He_harm3
-
 ```{r fig.width=10, fig.height=10}
 gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "LAT") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
+    dplyr::filter(Type == "LAT",
+                  shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
     ggtitle("Latitude")+
     xlab("Genetic diversity (He harm logit)")+
     ylab("Range shift (km/year)") +
@@ -3019,19 +1711,7 @@ gen_data_v1_dist2 %>%
     geom_smooth(method = "lm", color = "black", size=1)+
     stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
                 aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
-
-gen_data_v1_dist2 %>%
-    dplyr::filter(Type == "ELE") %>%
-    ggplot(aes(x = He_harm3, y = sqrt(abs(SHIFT_cor)), color = lag))+
-    ggtitle("Elevation")+
-    xlab("Genetic diversity (He harm logit)")+
-    ylab("Range shift (km/year)") +
-    scale_color_viridis_c(direction = -1)+
-    geom_point(alpha = .5, size = 3)+
-    theme_bw()+
-    geom_smooth(method = "lm", color = "black", size=1)+
-    stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
-                aes(by=as.factor(Article_ID)), color = "black")+
-    facet_grid(Group~Param,scales = "free")
+    facet_wrap(Group~Param, scales = "free")
 ```
+
+
