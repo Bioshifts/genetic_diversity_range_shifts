@@ -1,0 +1,1719 @@
+---
+title: "Adaptive potential\nMerge genetic data"
+author: "Bioshifts group"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+---
+
+# Load libraries and source code
+
+```{r libs, message=FALSE}
+rm(list=ls())
+
+library(ggplot2)
+require(data.table)
+library(dplyr)
+library(tidyr)
+require(parallel)
+library(bdc)
+library(taxadb)
+library(traitdataform)
+library(pbapply)
+library(tidyverse)
+library(readxl)
+library(lme4)
+library(coefplot)
+library(sjPlot)
+library(sjmisc)
+library(effects)
+library(rgdal)
+library(maptools)
+# library(rgeos)
+library(terra)
+library(MuMIn)
+# library(nlme)
+# library(pscl)
+library(lsmeans)
+# library(arm)
+# library(MCMCglmm)
+# library(PerformanceAnalytics)
+library(GGally)
+# library(broom.mixed)
+library(tidyterra)
+# library(rnaturalearth)
+
+```
+
+# Functions
+# source functions
+
+```{r func}
+
+# Code to find accepted species names
+# Before you can download the source code from github, make sure you have a personal github token
+# run this:
+# usethis::edit_r_environ()
+# if you have no toke, create one following:
+# 1. Generate on GitHub your personal token
+# 1.1 Go to GitHub
+# 2.1 In the right corner go to "Settings"
+# 2.2 Then in the left part go to "Developer setting"
+# 2.3 Select the option "Personal access tokens"
+# 2.4 Select the option "Generate new token"
+# 2.5 Copy your personal token
+# run this to add the token to your .Renviron
+# usethis::edit_r_environ()
+# write GITHUB_PAT=YOUR_TOKEN
+# Sys.getenv("GITHUB_PAT")
+
+# source(here::here("R/fetchGHdata.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Clean_names.R",
+#             output = here::here("R/Clean_names.R"))
+# 
+# fetchGHdata(gh_account = "Bioshifts", 
+#             repo = "bioshifts_v1_v2", 
+#             path = "R/Source_code/Find_Sci_Names.R",
+#             output = here::here("R/Find_Sci_Names.R"))
+
+source(here::here("R/Clean_names.R"))
+source(here::here("R/Find_Sci_Names.R"))
+source(here::here("R/mclapply_hack.R"))
+
+# Malin's transformation for moving values slightly inward. 
+transform01 <- function(x) (x * (length(x) - 1) + 0.5) / (length(x))
+
+# De Kort transformation
+deKort_trans <- function(p){
+  p <- scale(p)
+  p <- (p - min(p, na.rm = T))/(max(p, na.rm = T)-min(p, na.rm = T))
+  return(p)
+}
+
+# Malin's transformation before a logit transformation
+logit_trans <- function(p){
+  p <- transform01(p)
+  p <- log(p/(1-p))
+  return(p)
+}
+
+```
+
+# Load species list
+
+```{r splist}
+
+splist <- read.csv(here::here("Data/splist.csv"), header = T)
+# remove duplicated sp_names
+splist <- splist %>%
+  dplyr::filter(!duplicated(scientificName))%>%
+  mutate(Kingdom=kingdom,
+         Phylum=phylum,
+         Class=class,
+         Order=order,
+         Family=family)%>%
+  dplyr::select(scientificName,Kingdom,Phylum,Class,Order,Family,db)
+
+splist$Genus <- sapply(splist$scientificName, function(x){
+  strsplit(x," ")[[1]][1]
+})
+
+```
+
+# Load bioshifts
+
+## Geo data
+```{r}
+
+if(!file.exists(here::here("data/bioshiftsv3_metadata.csv"))){
+  
+  # # From Google drive
+  # drive_path <- readWindowsShortcut("G:/My Drive.lnk")$pathname
+  # bioshifts_path <- readWindowsShortcut(paste0(drive_path,"\\BIOSHIFTS Working Group.lnk"))$pathname
+  # shp_path <- here::here(bioshifts_path,("DATA/BIOSHIFTS_v3/CleanDatabasev3/ShapefilesBioShiftsv3"))
+  # all_shps <- list.files(shp_path,pattern = "dbf", full.names = TRUE)
+  
+  # From local folder
+  all_shps <- list.files("C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/ShapefilesBioShiftsv3",
+                         pattern = "shp", full.names = TRUE)
+  
+  biov1_meta <- pblapply(all_shps, terra::vect)
+  biov1_meta <- pblapply(biov1_meta, data.frame)
+  
+  biov1_meta <- data.table::rbindlist(biov1_meta)
+  
+  write.csv(biov1_meta, here::here("data/bioshiftsv3_metadata.csv"),row.names = FALSE)
+  
+} else {
+  
+  biov1_meta <- read.csv(here::here("data/bioshiftsv3_metadata.csv"))
+  
+}
+
+```
+
+## Load v1
+
+```{r v1}
+
+biov1 <- read.csv(here::here("Data/biov1_fixednames.csv"), header = T)
+
+# Fix references in biov1
+biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+
+# Select columns of interest
+biov1 <- biov1 %>%
+  filter(!Type %in% c("BAT","LON")) %>%
+  dplyr::select(ID,Article_ID,Study_ID,
+                Type,Param,Trend,SHIFT,UNIT,DUR,
+                v.lat.mean,v.ele.mean,trend.mean,
+                START,END,Sampling,Uncertainty_Distribution,Uncertainty_Parameter,Nperiodes,
+                N,Grain_size,Data,ID.area,
+                Phylum,Class,Order,Family,Genus,sp_name_std_v1,
+                group,ECO,Hemisphere) %>% # select columns
+  mutate(
+    Type = case_when(
+      Type=="HOR" ~ "LAT",
+      TRUE ~ as.character(Type)),
+    Data = case_when(
+      Data=="occurence-based" ~ "occurrence-based",
+      TRUE ~ as.character(Data)),
+    spp = sp_name_std_v1,
+    SHIFT_abs = abs(SHIFT),
+    velocity = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
+    vel_sign = ifelse(velocity>0,"pos","neg"))
+
+# add geospatial data
+biov1_meta$ID <- biov1_meta$Name
+
+biov1 <- biov1 %>%
+  filter(ID %in% biov1_meta$ID)
+
+# merge
+biov1 <- merge(biov1,biov1_meta,by="ID",all.y = TRUE) # all.y to keep only studies with geospatial data
+
+# Get Extent (=Lat/Ele extent)
+biov1$Extent <- biov1$LatExtentk
+biov1$Extent[which(biov1$Type=="ELE")] <- biov1$EleExtentm[which(biov1$Type=="ELE")]
+
+# Number of temporal units
+biov1$NtempUnits <- biov1$Nperiodes
+these <- which(biov1$NtempUnits > biov1$DUR)
+biov1$NtempUnits[these] <- biov1$DUR[these]
+
+# log NtempUnits
+biov1$LogNtempUnits <- log(biov1$NtempUnits)
+
+## group irregular sampling with multiple sampling  
+biov1$Sampling = ifelse(biov1$Sampling %in% c("IRR","MULTIPLE(continuous)"),"MULT", biov1$Sampling)
+
+## Grain
+biov1$Grain <- factor(biov1$Grain_size, levels = c("small", "moderate", "large","very_large"))
+biov1$ContinuousGrain <- 
+  as.numeric(
+    as.character(
+      ifelse(
+        biov1$Grain == "small", 1, 
+        ifelse(biov1$Grain == "moderate",
+               2, #10,
+               ifelse(biov1$Grain == "large",
+                      3, #100,
+                      4))))) #we have a few very large in the full database
+
+#harmonize column names
+biov1$Quality <- ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING"),"BALANCED",
+                        ifelse(biov1$Uncertainty_Distribution %in% c("MODEL","MODEL+RESAMPLING(same)","RESAMPLING(same)+MODEL","RESAMPLING+MODEL"),"BALANCED",
+                               ifelse(biov1$Uncertainty_Distribution %in% c("DETECTABILITY","RESAMPLING(same)+DETECTABILITY"),"BALANCED",
+                                      ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING(same)"),"RESURVEYED",biov1$Uncertainty_Distribution))))
+
+table(biov1$Quality) 
+
+biov1$PrAb <- ifelse(biov1$Data %in% c("occurence-based", "occurrence-based"),"occurrence","abundance")
+table(biov1$PrAb) 
+
+biov1 <- biov1 %>%
+  dplyr::filter(!is.na(sp_name_std_v1))
+
+all(biov1$sp_name_std_v1 %in% splist$scientificName)
+
+# from continuous to categorical
+q1=quantile(biov1$START,probs=c(0,0.25,0.5,0.75,1))
+biov1$StartF=cut(biov1$START,breaks=q1,include.lowest=T)
+
+q1=quantile(biov1$Extent ,probs=c(0,0.25,0.5,0.75,1))
+biov1$ExtentF=cut(biov1$Extent,breaks=q1,include.lowest=T)
+
+q1=quantile(biov1$ID.area,probs=c(0,0.25,0.5,0.75,1))
+biov1$AreaF=cut(biov1$ID.area,breaks=q1,include.lowest=T)
+
+q1=quantile(biov1$N,probs=c(0,0.25,0.5,0.75,1))
+biov1$NtaxaF=cut(biov1$N,breaks=q1,include.lowest=T)
+
+# add ID to obs
+biov1$obs_ID <- paste0("S",1:nrow(biov1))
+
+summary(biov1$velocity)
+summary(biov1$velocity[which(biov1$vel_sign=="pos")])
+
+```
+
+## Classify species
+
+```{r classify}
+
+# Class species as Terrestrial, Marine or Freshwater
+Terv1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "T")])
+Terrestrials = unique(c(Terv1))
+
+Mar1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "M")])
+Marine = unique(c(Mar1))
+
+# Freshwater fish
+FFishv1 <- unique(biov1$sp_name_std_v1[(biov1$Class == "Actinopterygii" | biov1$Class == "Cephalaspidomorphi") & biov1$ECO == "T"])
+FFish = unique(c(FFishv1))
+# Marine fish
+MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
+MFish = unique(c(MFishv1))
+
+splist$ECO = NA
+splist$ECO[which(splist$scientificName %in% Terrestrials)] <- "T"
+splist$ECO[which(splist$scientificName %in% Marine)] <- "M"
+splist$ECO[which(splist$scientificName %in% MFish)] <- "M"
+
+biov1$ECO = NA
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Terrestrials)] <- "T"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Marine)] <- "M"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% MFish)] <- "M"
+
+splist$Group = NA
+splist$Group[which(splist$Class == "Phaeophyceae")] <- "Chromista"
+splist$Kingdom[which(splist$Class == "Phaeophyceae")] <- "Chromista"
+splist$Group[which(splist$Phylum == "Rhodophyta")] <- "Seaweed"
+splist$Kingdom[which(splist$Phylum == "Rhodophyta")] <- "Plantae"
+splist$Group[which(splist$Family == "Elminiidae")] <- "Barnacles"
+splist$Group[which(splist$Kingdom == "Bacteria")] <- "Bacteria"
+splist$Group[which(splist$Class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$Class == "Aves")] <- "Bird"
+splist$Group[which(splist$Class == "Insecta")] <- "Insect"
+splist$Group[which(splist$Class == "Mammalia")] <- "Mammal"
+splist$Group[which(splist$Class == "Arachnida")] <- "Spider"
+splist$Kingdom[which(splist$Kingdom == "Viridiplantae")] <- "Plantae"
+splist$Kingdom[which(splist$Phylum == "Tracheophyta")] <- "Plantae"
+splist$Group[which(splist$Kingdom == "Plantae")] <- "Plant"
+splist$Group[which(splist$Class == "Hydrozoa")] <- "Hydrozoa"
+splist$Group[which(splist$Class == "Anthozoa")] <- "Sea anemones and corals"
+splist$Group[which(splist$Class == "Polychaeta")] <- "Polychaetes"
+splist$Group[which(splist$Phylum == "Mollusca")] <- "Molluscs"
+splist$Group[which(splist$Class == "Malacostraca")] <- "Crustacean"
+splist$Group[which(splist$Class == "Hexanauplia")] <- "Crustacean"
+splist$Group[which(splist$Class == "Maxillopoda")] <- "Crustacean"
+splist$Group[which(splist$Class == "Ostracoda")] <- "Crustacean"
+splist$Group[which(splist$Class == "Branchiopoda")] <- "Crustacean"
+splist$Group[which(splist$Class == "Asteroidea")] <- "Starfish"
+splist$Group[which(splist$Class == "Ascidiacea")] <- "Ascidians tunicates and sea squirts"
+splist$Class[which(splist$Class == "Actinopteri")] <- "Actinopterygii"
+splist$Group[which(splist$Class == "Actinopterygii")] <- "Fish"
+splist$Group[which(splist$Class == "Elasmobranchii")] <- "Fish"
+splist$Group[which(splist$Order == "Perciformes")] <- "Fish"
+splist$Group[which(splist$Class == "Chondrichthyes")] <- "Fish"
+splist$Group[which(splist$Class == "Holocephali")] <- "Fish"
+splist$Group[which(splist$Class == "Cephalaspidomorphi")] <- "Fish"
+splist$Group[which(splist$Class == "Echinoidea")] <- "Sea urchin"
+splist$Group[which(splist$Class == "Crinoidea")] <- "Crinoid"
+splist$Group[which(splist$Class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$Class == "Reptilia")] <- "Reptile"
+splist$Group[which(splist$Order == "Squamata")] <- "Reptile"
+splist$Group[which(splist$Class == "Ophiuroidea")] <- "Brittle stars"
+splist$Group[which(splist$Class == "Chilopoda")] <- "Centipedes"
+splist$Group[which(splist$Class == "Diplopoda")] <- "Millipedes"
+splist$Group[which(splist$Class == "Amphibia")] <- "Amphibian"
+splist$Group[which(splist$Kingdom == "Fungi")] <- "Fungi"
+splist$Group[which(splist$Order == "Balanomorpha")] <- "Barnacles"
+splist$Group[which(splist$Phylum == "Nematoda")] <- "Nematodes"
+splist$Group[which(splist$Class == "Myxini")] <- "Hagfish"
+splist$Group[which(splist$Kingdom == "Chromista")] <- "Chromista"
+splist$Family[which(splist$Genus == "Dendrocopus")] <- "Picidae"
+
+######################################
+biov1 <- merge(biov1[,-which(names(biov1) %in% c("Phylum","Class","Order","Family","Genus","Group","ECO"))], 
+               splist[,c("Kingdom","Phylum","Class","Order","Family","Genus","Group","ECO","scientificName")], 
+               by.x = "sp_name_std_v1", by.y = "scientificName", 
+               all.x = T)
+
+```
+
+## Filter LAT / ELE shifts
+
+Use only latitudinal and elevational shifts
+
+```{r filter}
+
+# v1
+biov1 <- biov1 %>%
+  dplyr::filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+
+# splist
+sps <- unique(biov1$sp_name)
+splist <- splist %>% dplyr::filter(scientificName %in% sps)
+
+```
+
+## Remove species identified to the genus level or cf.
+
+```{r clean}
+
+if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
+  biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_reported_name_v1))
+}
+if(any(grep("sp[.]",biov1$sp_name_std_v1))){
+  biov1 <- biov1 %>% dplyr::filter(!grepl("sp[.]",sp_name_std_v1))
+}
+if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
+  biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_reported_name_v1))
+}
+if(any(grep("cf[.]",biov1$sp_name_std_v1))){
+  biov1 <- biov1 %>% dplyr::filter(!grepl("cf[.]",sp_name_std_v1))
+}
+
+#remove freshwater fishes
+biov1 <- biov1[-which((biov1$Class == "Actinopterygii" | biov1$Group == "Fish") & biov1$ECO=="T"),]
+
+#remove marine birds
+biov1 <- biov1[-which(biov1$Class == "Aves" & biov1$ECO=="M"),]
+
+
+if(any(grep("sp[.]",splist$scientificName))){
+  splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("sp[.]",splist$scientificName))){
+  splist <- splist %>% dplyr::filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+  splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+  splist <- splist %>% dplyr::filter(!grepl("cf[.]",scientificName))
+}
+
+
+```
+
+## Reclassify methodological variables
+
+```{r reclass_meth}
+
+unique(biov1$Data)
+biov1$Data[biov1$Data=="occurence-based"] <- "occurrence-based"
+biov1$Data <- factor(biov1$Data, levels = unique(biov1$Data))
+table(biov1$Data)
+
+unique(biov1$Sampling)
+biov1$Sampling = ifelse(biov1$Sampling %in% c("IRR","MULTIPLE(continuous)"),"MULTIPLE", biov1$Sampling)
+biov1$Sampling <- ordered(biov1$Sampling, 
+                          levels = c("TWO","MULTIPLE","CONTINUOUS"))
+table(biov1$Sampling)
+
+unique(biov1$Grain_size)
+biov1$Grain_size <- ifelse(biov1$Grain_size %in% c("large","very_large"),"large",biov1$Grain_size)
+biov1$Grain_size <- ordered(biov1$Grain_size, 
+                            levels = c("small","moderate","large"))
+table(biov1$Grain_size)
+
+unique(biov1$Uncertainty_Distribution)
+biov1$Uncertainty_Distribution <- ifelse(biov1$Uncertainty_Distribution %in% c("RESAMPLING","RESAMPLING(same)"),"RESAMPLING",
+                                         ifelse(biov1$Uncertainty_Distribution %in% c("MODEL","MODEL+RESAMPLING(same)","RESAMPLING+MODEL"),"MODEL",
+                                                ifelse(biov1$Uncertainty_Distribution %in% c("DETECTABILITY","RESAMPLING(same)+DETECTABILITY"),"DETECTABILITY",
+                                                       biov1$Uncertainty_Distribution)))
+biov1$Uncertainty_Distribution <- ifelse(biov1$Uncertainty_Distribution == "RAW","OPPORTUNISTIC","PROCESSED")  
+table(biov1$Uncertainty_Distribution)
+
+#transform study area
+biov1$ID.area <- log(biov1$ID.area)
+
+```
+
+## Get centroids of study areas
+
+This will be used to merge genetic data with bioshifts based on distance of observations
+
+```{r get_centroids}
+
+# # The input file geodatabase
+# fgdb <- "C:/Users/brunn/nextCloud/bioshifts_v1_v2/v1/Study_Areas_v1/Study_Areas.gdb"
+# 
+# # List all feature classes in a file geodatabase
+# fc_list <- ogrListLayers(fgdb)
+# 
+# # Get centroids
+# cl <- makeCluster(detectCores()-1)
+# clusterExport(cl, c("readOGR", "gCentroid", "fgdb"))
+# 
+# centroids <- pblapply(fc_list, function(x){
+#     fc <- readOGR(dsn=fgdb,layer=x)
+#     c <- data.frame(gCentroid(fc))
+#     names(c) <- c("centroid.x", "centroid.y")
+# 
+#     geomet <- data.frame(terra::geom(terra::vect(fc)))
+# 
+#     max_lat <- order(geomet[,"y"], decreasing = T)[1]
+#     max_lat <- geomet[max_lat,c("x","y")]
+#     names(max_lat) <- c("max_lat.x", "max_lat.y")
+# 
+#     min_lat <- order(geomet[,"y"])[1]
+#     min_lat <- data.frame(geomet[min_lat,c("x","y")])
+#     names(min_lat) <- c("min_lat.x", "min_lat.y")
+# 
+#     cbind(c, max_lat, min_lat)
+# }, cl = cl)
+# 
+# stopCluster(cl)
+# 
+# centroids <- do.call("rbind",centroids)
+# centroids$ID <- fc_list
+# 
+# write.csv(centroids, "Data/centroids_study_areas.csv", row.names = FALSE)
+
+centroids <- read.csv(here::here("Data/centroids_study_areas.csv"))
+
+biov1 <- merge(biov1, centroids, by = "ID")
+
+```
+
+# Direction of shift
+
+Identify direction of shift
+
+```{r shift_direction}
+
+biov1 <- biov1 %>%
+  mutate(shift_sign = ifelse(SHIFT>0,"pos","neg"),
+         shift_vel_sign = paste0(shift_sign,vel_sign)) %>%
+  filter(!is.na(velocity))
+
+ggplot(biov1, aes(x=shift_vel_sign))+
+  geom_bar()+
+  coord_flip()+
+  facet_wrap(Type~Param)
+
+summary(biov1$velocity)
+summary(biov1$velocity[which(biov1$shift_vel_sign=="pospos")])
+summary(biov1$velocity[which(biov1$shift_vel_sign=="negneg")])
+
+
+```
+
+# Calculate lags raw
+
+```{r lagsR}
+
+# calculate lags
+# positive values are a lag (range shift lower smaller than expected or in opposite directions) and negative values are range shift larger than expected
+biov1$lag <- biov1$velocity-biov1$SHIFT
+position = which(biov1$vel_sign == "neg")
+biov1$lag[position] <- biov1$lag[position] * -1 # Any negative velocity means the sign of lag has to shift.
+
+# Lag 2
+# When shift is in opposite sign of velocity, lag = abs(velocity)
+biov1$lag2 = biov1$lag
+position <- which(biov1$shift_vel_sign == "posneg" | biov1$shift_vel_sign == "negpos")
+biov1$lag2[position] <- abs(biov1$velocity[position])
+
+# Lag 3
+# When shift is > velocity, lag = 0
+biov1$lag3 = biov1$lag2
+position <- which((biov1$shift_sign == "pos" & biov1$SHIFT > biov1$velocity) |
+                    (biov1$shift_sign == "neg" & biov1$SHIFT < biov1$velocity))
+biov1$lag3[position] <- 0
+
+
+{
+  par(mfrow=c(2,2))
+  plot(lag~velocity, biov1)
+  plot(lag2~velocity, biov1)
+  plot(lag3~velocity, biov1)
+}
+
+ggplot(biov1, aes(x = Param, y=lag, fill = Param, color = Param))+
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
+
+ggplot(biov1, aes(x = Param, y=lag2, fill = Param, color = Param))+
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  scale_y_continuous(limits = quantile(biov1$lag2, c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
+
+ggplot(biov1, aes(x = Param, y=log1p(lag3), fill = Param, color = Param))+
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  # scale_y_continuous(limits = quantile(log1p(biov1$lag3), c(0.1, 0.9), na.rm = T))+
+  facet_wrap(.~Type, scales = "free")
+
+```
+
+
+# All shifts vs same direction
+
+```{r fig.height=10, fig.width=10}
+
+ggplot(biov1, aes(x = velocity, y = SHIFT))+
+  geom_point(aes(color = lag2), alpha = .1)+
+  scale_color_viridis_c()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  facet_wrap(Param~Type+ECO)
+
+ggplot(biov1 %>%
+         filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg"), 
+       aes(x = abs(velocity), y = abs(SHIFT)))+
+  geom_point(aes(color = lag2), alpha = .1)+
+  scale_color_viridis_c()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  facet_wrap(Param~Type+ECO)
+
+
+```
+
+# Load genetic data
+
+- mt and ms are unpublished Malin's data:
+These are mitocondrial (mt) or microsatelite (ms) data.
+
+- gen_d is from De Kort et al 2021 
+Citation: *De Kort et al. 2021. Life history, climate and biogeography interactively affect worldwide genetic diversity of plant and animal populations. Nat Commun.*
+This is population-level data for plants and animals. Genetic diversity was estimated from expected heterozygosity. They AFLP and microsatelite data, applying a harmonization approach for comparing both data.
+
+- gen_lf is from Lawrence et al. 2019
+Citation: *Lawrence, Elizabeth R; N. Benavente, Javiera; Matte, Jean-Michel; Marin, Kia; Wells, Zachery; Bernos, Thaïs A.; et al. (2019). MacroPopGen Database: Geo-referenced population-specific microsatellite data across the American continents. figshare. Dataset.*
+This is population-level data using microsatellite data across the Americas. 
+
+
+```{r gen_data, eval=FALSE}
+
+mt <- fread(here::here('Data/Old/mtdna.csv'))
+mt$spp <- Clean_Names(mt$spp)
+
+ms <- fread(here::here('Data/Old/msat.csv'))
+ms$spp <- Clean_Names(ms$spp)
+
+gen_d <- fread(here::here('Data/Old/Deposited_data_genetic_diversity_dekort2021.csv'))
+gen_d$spp <-  gsub("_"," ",gen_d$Species)
+gen_d$spp <- Clean_Names(gen_d$spp)
+
+gen_lf <- read_excel(here::here("Data/Old/MacroPopGen_Database_final-v0.2.xlsx"), sheet = "MacroPopGen_Database")
+gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
+gen_lf$spp <- Clean_Names(gen_lf$spp)
+
+# De Kort
+length(unique(gen_d$spp)) # 714
+
+# Lawrence et al.
+length(unique(gen_lf$spp)) # 895
+
+# Malin mithocondrial
+length(unique(mt$spp)) # 162
+
+# Malin microsatelites
+length(unique(ms$spp)) # 275
+
+# N species with gen data
+gen_sps <- unique(c(ms$spp,mt$spp,gen_lf$spp,gen_d$spp))
+length(gen_sps) # 1893
+
+```
+
+## Fix names at the genetic data
+
+```{r fixnames, eval=FALSE}
+
+# Species to find
+mycols <- c("species","scientificName","kingdom","phylum","class","order","family","db_code")
+splist <- data.frame(matrix(ncol = length(mycols), nrow = length(unique(gen_sps))))
+names(splist) <- mycols
+
+splist$reported_name_fixed <- unique(gen_sps)
+tofind_ <- splist[which(is.na(splist$scientificName)),]
+tofind_ <- unique(tofind_$reported_name_fixed)
+
+tofind <- data.frame(matrix(nrow = length(tofind_), ncol = 8))
+names(tofind) = c("scientificName", "kingdom", "phylum", "class", "order", "family", "db", "db_code")
+
+tofind <- data.frame(species = tofind_, tofind)
+
+tofind <- tofind %>%
+  mutate(across(everything(), as.character))
+
+# retrieve sp names
+sp_names_found <- Find_Sci_Names(spnames = tofind$species)
+
+# Feed
+tofind <- tofind %>% 
+  rows_patch(sp_names_found, 
+             by = "species")
+
+gc()
+
+## Add found species names to the splist
+all(tofind$species %in% splist$reported_name_fixed)
+
+if(any(is.na(tofind$scientificName))){
+  found <- tofind[-which(is.na(tofind$scientificName)),]
+} else {
+  found = tofind
+}
+
+for(i in 1:length(found$species)){
+  tofill <- unique(which(splist$reported_name_fixed == found$species[i]))
+  splist$scientificName[tofill] <- found$scientificName[i]
+  splist$kingdom[tofill] <- found$kingdom[i]
+  splist$phylum[tofill] <-found$phylum[i]
+  splist$class[tofill] <- found$class[i]
+  splist$order[tofill] <- found$order[i]
+  splist$family[tofill] <- found$family[i]
+  splist$db[tofill] <- found$db[i]
+  splist$db_code[tofill] <- found$db_code[i]
+}
+
+splist$spp = splist$reported_name_fixed
+
+# Keep original names for those species we could not find a name at GBIF
+pos <- which(is.na(splist$scientificName))
+splist$scientificName[pos] <- splist$spp[pos]
+
+any(!mt$spp %in% gen_sps)
+any(!mt$spp %in% splist$spp)
+
+any(!ms$spp %in% gen_sps)
+any(!ms$spp %in% splist$spp)
+
+any(!gen_d$spp %in% gen_sps)
+any(!gen_d$spp %in% splist$spp)
+
+any(!gen_lf$spp %in% gen_sps)
+any(!gen_lf$spp %in% splist$spp)
+
+for(i in 1:nrow(mt)){
+  mt$spp_new[i] <- splist$scientificName[which(splist$spp == mt$spp[i])]
+}
+for(i in 1:nrow(ms)){
+  ms$spp_new[i] <- splist$scientificName[which(splist$spp == ms$spp[i])]
+}
+for(i in 1:nrow(gen_d)){
+  gen_d$spp_new[i] <- splist$scientificName[which(splist$spp == gen_d$spp[i])]
+}
+for(i in 1:nrow(gen_lf)){
+  gen_lf$spp_new[i] <- splist$scientificName[which(splist$spp == gen_lf$spp[i])]
+}
+
+write.csv(mt, 
+          here::here('Data/mtdna_harmo.csv'), row.names = FALSE)
+write.csv(ms, 
+          here::here('Data/msat_harmo.csv'), row.names = FALSE)
+write.csv(gen_d, 
+          here::here('Data/Deposited_data_genetic_diversity_dekort2021_harmo.csv'), row.names = FALSE)
+write.csv(gen_lf, 
+          here::here('Data/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'), row.names = FALSE)
+
+```
+
+# Load harmonized genetic data 
+
+```{r load_harmonized_gen}
+
+mt <- fread(here::here('Data/Old/mtdna_harmo.csv'))
+ms <- fread(here::here('Data/Old/msat_harmo.csv'))
+gen_d <- fread(here::here('Data/Old/Deposited_data_genetic_diversity_dekort2021_harmo.csv'))
+gen_d$spp <-  gsub("_"," ",gen_d$Species)
+gen_lf <- fread(here::here('Data/Old/MacroPopGen_Database_final_areas_Lawrence_Fraser_2020_harmo.csv'))
+gen_lf$spp <-  gsub("_"," ",gen_lf$G_s)
+
+```
+
+## Stats
+
+```{r}
+
+# update new names
+mt$spp <- mt$spp_new
+ms$spp <- ms$spp_new
+gen_d$spp <- gen_d$spp_new
+gen_lf$spp <- gen_lf$spp_new
+
+# N species with Gen data in bioshifts
+gen_sps <- unique(c(mt$spp, ms$spp, gen_d$spp, gen_lf$spp))
+
+length(which(gen_sps %in% unique(biov1$spp))) # 318
+
+# Malin's mt in bioshifts
+length(which(unique(mt$spp) %in% unique(biov1$spp))) # 32
+# Malin's ms in bioshifts
+length(which(unique(ms$spp) %in% unique(biov1$spp))) # 53
+# De Kort et al. in bioshifts
+length(which(unique(gen_d$spp) %in% unique(biov1$spp))) # 148
+# Lawrance et al. ms in bioshifts
+length(which(unique(gen_lf$spp) %in% unique(biov1$spp))) # 132
+
+```
+## Filter species in Bioshifts
+```{r}
+
+gen_sps <- gen_sps[which(gen_sps %in% unique(biov1$spp))]
+
+mt <- mt %>% filter(spp %in% gen_sps)
+ms <- ms %>% filter(spp %in% gen_sps)
+gen_d <- gen_d %>% filter(spp %in% gen_sps)
+gen_lf <- gen_lf %>% filter(spp %in% gen_sps)
+
+```
+
+
+## Explore distribution
+
+```{r}
+
+# Malin
+ggplot(mt, aes(He)) +
+  geom_histogram() +
+  ggtitle("Malin's Mitochondrial")
+
+ggplot(ms, aes(He)) +
+  geom_histogram() +
+  ggtitle("Malin's Microsatellite")
+
+# De Kort
+ggplot(gen_d, aes(GDp)) +
+  geom_histogram() +
+  ggtitle("De Kort AFLP & Microsatellite")
+# Why De Kort data has the two peaks? It is due to the marker type
+ggplot(gen_d, aes(GDp)) +
+  geom_histogram()+
+  facet_grid(.~Marker)
+# But if we look at the normalized GDp, the problem is solved. Therefore, we should be using the normalized version of GDp from DeKort
+ggplot(gen_d, aes(GDp_norm)) +
+  geom_histogram()
+
+# Lawrence & Fraser
+ggplot(gen_lf, aes(as.numeric(He))) +
+  geom_histogram()+
+  ggtitle("Lawrence & Fraser Microsatellite")
+
+```
+
+# Create a single genetic diversity dataset
+
+```{r}
+
+# Malin
+mt_sub <- mt  %>%
+  mutate(long = as.numeric(lon),
+         lat = as.numeric(lat),
+         N = as.numeric(n), # Sample size
+         Marker = "Mitochondrial")  %>%
+  dplyr::filter(!is.na(He) | !He==0) %>%
+  dplyr::select(spp, He, long, lat, Marker)
+mt_sub$Source = "Malin"
+mt_sub$Het_type = "He"
+
+ms_sub <- ms %>%
+  mutate(long = as.numeric(lon),
+         lat = as.numeric(lat),
+         N = as.numeric(n), # Sample size
+         Marker = "Microsatellite")  %>%
+  dplyr::filter(!is.na(He) | !He==0) %>%
+  dplyr::select(spp, He, long, lat, Marker)
+ms_sub$Source = "Malin"
+ms_sub$Het_type = "He"
+
+###################
+# De Kort
+
+# Jonathan R.:
+# co-dominant refers to the fact that you can distinguish homozigous and heterozygous individuals, such as microsatellites
+# dominant means that you either have the detection of the marker or not. but you don’t know if the individual is heterozygous or not, such as AFLP
+# restriction enzymes are proteins that you use to cut the genomes into fragments. there are used for AFLP and allozymes, so not sure
+
+# De Kort code for Marker:
+# CD = Co-dominant
+# D = Dominant
+# ENZ = Enzime
+
+gen_d_sub <- gen_d %>%
+  mutate(long = as.numeric(LONGITUDE),
+         lat = as.numeric(LATITUDE),
+         spp = spp, 
+         He = as.numeric(GDp),
+         N = as.numeric(SampleSize), # Sample size
+         Marker = case_when(
+           Marker=="CD" ~ "Microsatellite",
+           Marker=="D" ~ "AFLP",
+           Marker=="ENZ" ~ "AFLP",
+           TRUE ~ as.character(Marker))) %>%
+  dplyr::filter(!is.na(He) | !He==0) %>%
+  dplyr::filter(!(Marker == "AFLP" & He > .5)) %>% # AFLPs > 0.5 are errors
+  dplyr::select(spp, He, long, lat, Marker)
+gen_d_sub$Source = "De Kort"
+gen_d_sub$Het_type = "He"
+
+# How DeKort calculated the normalized version of GDp
+# gen_d_sub$He_harm <- NA
+# 
+# m <- unique(gen_d_sub$Marker)
+# for(i in 1:length(m)){
+# pos <- which(gen_d_sub$Marker == m[i])
+# gen_d_sub$He_harm[pos] <-  scale(gen_d_sub$He[pos])
+# }
+# gen_d_sub$He_harm <-  (gen_d_sub$He_harm - min(gen_d_sub$He_harm))/(max(gen_d_sub$He_harm)-min(gen_d_sub$He_harm))
+
+###################
+# Lawrence & Fraser
+pos <- which(is.na(gen_lf$He))
+gen_lf$He_new <- gen_lf$He
+gen_lf$He_new[pos] <- gen_lf$Ho[pos]
+gen_lf$Het_type = "He"
+gen_lf$Het_type[pos] = "Ho"
+
+gen_lf_sub <- gen_lf %>%
+  mutate(long = as.numeric(Long),
+         lat = as.numeric(Lat),
+         He = as.numeric(He_new),
+         spp = spp,
+         N = as.numeric(n), # Sample size
+         Marker = "Microsatellite") %>% 
+  dplyr::filter(!is.na(He) | !He==0) %>%
+  dplyr::select(spp, He, long, lat, Marker, Het_type) 
+gen_lf_sub$Source = "Lawrence & Fraser"
+
+###################
+# Group all
+gen_div <- rbind(mt_sub %>% dplyr::select(names(mt_sub)), 
+                 ms_sub %>% dplyr::select(names(mt_sub)),
+                 gen_d_sub %>% dplyr::select(names(mt_sub)),
+                 gen_lf_sub %>% dplyr::select(names(mt_sub)))
+gen_div <- na.omit(gen_div)
+
+gen_div$spp <- as.factor(gen_div$spp)
+gen_div$Marker <- as.factor(gen_div$Marker)
+gen_div$Source <- as.factor(gen_div$Source)
+
+length(unique(gen_div$spp))
+
+```
+
+# Harmonize genetic data
+
+- He_harm = transformation used in DeKort et al 2021 (Nature Communications). Makes markers range from 0-1.
+1) scale values at each marker type
+2) standardize (x - min)/(max-min)
+- He_harm2 = transformation suggested by Malin. Applies the function transform01 before a logit transformation. 
+1) transform01 >> The only intent of this function is to move slightly inward the values of He so that it allows applying logit transformation.
+2) apply logit transformation
+- He_harm3 = He_harm2 centered in zero. 
+
+```{r}
+
+gen_div$He_harm <- NA
+gen_div$He_harm2 <- NA
+gen_div$He_harm3 <- NA
+
+m <- unique(gen_div$Marker)
+for(i in 1:length(m)){
+  # Select marker type
+  pos <- which(gen_div$Marker == m[i])
+  # Apply DeKort transformation
+  gen_div$He_harm[pos] <- deKort_trans(gen_div$He[pos])
+  # Apply logit transformation
+  gen_div$He_harm2[pos] <- logit_trans(gen_div$He[pos])
+  # Centered in zero
+  gen_div$He_harm3[pos] <- scale(gen_div$He_harm2[pos])
+}
+
+length(unique(gen_div$spp))
+
+# remove outliers
+gen_metrics <- c("He_harm","He_harm2","He_harm3")
+
+for (i in 1:length(gen_metrics)){
+  my_gem <- as.numeric(data.frame(gen_div %>% select(gen_metrics[i]))[,1])
+  
+  quartiles <- quantile(my_gem, probs=c(.05, .95), na.rm = FALSE)
+  IQR <- IQR(my_gem)
+  
+  Lower <- quartiles[1] - 1.5*IQR
+  Upper <- quartiles[2] + 1.5*IQR 
+  
+  gen_div <- subset(gen_div, my_gem > Lower & my_gem < Upper)
+}
+
+length(unique(gen_div$spp))
+
+```
+
+## Avg by location 
+We averaged genetic diversity by location (same species, in the same XY coordinates)
+```{r}
+
+# How many species with >1 gen div measurements at the same site?
+# Check how many obs per site and marker type exist
+N_obs <- gen_div %>%
+  group_by(spp, long, lat) %>%
+  tally() %>%
+  dplyr::filter(n>1)
+
+DT::datatable(N_obs)
+
+# Is there any species with >1 marker type in the same location?
+gen_div %>%
+  group_by(spp, long, lat, Marker) %>%
+  dplyr::summarise(N = length(unique(spp))) %>%
+  dplyr::filter(N>1)
+# No, there are not
+
+# Is there any species with >1 Source type in the same location?
+gen_div %>%
+  group_by(spp, long, lat, Source) %>%
+  dplyr::summarise(N = length(unique(spp))) %>%
+  dplyr::filter(N>1)
+# No, there are not
+
+# Avg by site and species
+gen_div <- gen_div %>%
+  group_by(spp, long, lat) %>%
+  dplyr::summarise(He = median(He),
+                   He_harm = median(He_harm),
+                   He_harm2 = median(He_harm2),
+                   He_harm3 = median(He_harm3),
+                   Source = paste(Source, sep = ", "),
+                   Marker = paste(Marker, sep = ", "))
+
+unique(gen_div$Source)
+unique(gen_div$Marker)
+length(unique(gen_div$spp))
+
+```
+
+## Which species?
+
+```{r fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
+
+gen_div <- merge(gen_div, 
+                 splist[,-7],
+                 by.x="spp",
+                 by.y="scientificName",
+                 all.x = T)
+
+toplot_ <- gen_div %>%
+  group_by(Group) %>%
+  dplyr::summarise(Obs = length(spp),
+                   Species = length(unique(spp))) %>%
+  gather(var, N, -c(Group))
+
+ggplot(toplot_, aes(x = Group, y = N))+
+  ggtitle("N species by Group")+
+  geom_bar(stat="identity")+
+  geom_text(aes(y=N, label=N, 
+                hjust = ifelse(N<max(N),-.1,1.1)), vjust=0.2, size=3, 
+            position = position_dodge(0.9))+
+  theme_classic()+
+  coord_flip()+
+  facet_wrap(.~var, scales = "free", ncol=1)
+
+```
+
+## Distribution of He
+
+```{r message=FALSE}
+# correlations
+ggpairs(gen_div,
+        columns = c("He","He_harm","He_harm2","He_harm3"))
+
+
+ggpairs(gen_div,
+        columns = c("He","He_harm","He_harm2","He_harm3"),      
+        aes(color = Marker,  
+            alpha = 0.5))     
+
+ggpairs(gen_div,
+        columns = c("He","He_harm","He_harm2","He_harm3"),      
+        aes(color = Source,  
+            alpha = 0.5))
+```
+
+
+```{r message=FALSE, fig.width=10,fig.height=3}
+
+to_plot <- gen_div %>%
+  select(Group,He_harm,He_harm2,He_harm3) %>%
+  filter(Group %in% c("Mammal","Fish","Plant", "Bird")) %>%
+  gather(metric, value, -Group)
+
+ggplot(to_plot, aes(value, fill = Group, color = Group))+
+  geom_density(alpha = .3)+
+  scale_color_viridis_d()+
+  scale_fill_viridis_d()+
+  facet_wrap(.~metric, scales = "free")
+
+
+```
+
+## High He with latitude?
+### Absolution latitude
+```{r}
+toplot <- gen_div %>%
+  mutate(Hemisphere = ifelse(lat<0, "South", "North"),
+         lat_abs = abs(lat),
+         He_harm = scale(He_harm),
+         He_harm3 = scale(He_harm3))
+
+ggplot(toplot, aes(x = lat_abs, y = He_harm, color = Group))+
+  geom_point(alpha = .1)+
+  stat_smooth(method = "lm")+
+  facet_wrap(.~Group)
+
+mod1 <- lm(He_harm~lat*Group, toplot)
+emtrends(mod1, ~ lat*Group, var = "lat")
+```
+
+## Spatial pattern
+
+```{r fig.width=10, fig.height=5}
+
+mundi <- rnaturalearth::ne_coastline(scale = 110, returnclass = "sv")
+mundi <- crop(mundi, ext(c(-180,180,-60,90)))
+
+# get vect gen div
+vect_div <- terra::vect(gen_div %>%
+                          dplyr::filter(spp %in% biov1$sp_name_std_v1),
+                        geom=c("long","lat"),crs=crs(mundi))
+
+# get vect centroids bioshifts
+vect_biov1 <- terra::vect(biov1 %>%
+                            filter(spp %in% gen_div$spp),
+                          geom=c("centroid.x","centroid.y"),crs=crs(mundi))
+
+# get raster bioshifts shp files study areas
+get_raster_bioshifts = "NO"
+if(get_raster_bioshifts=="YES"){
+  my_ext = terra::ext(mundi)
+  my_crs = crs(mundi)
+  rast_biov1 <- terra::rast(my_ext, crs = my_crs, res = 0.5)
+  values(rast_biov1) <- 0
+  
+  fgdb <- "C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/Study_Areas_v1/Study_Areas.gdb"
+  fc_list <- terra::vector_layers(fgdb)
+  fc_list <- fc_list[which(fc_list %in% unique(as.data.frame(vect_biov1)$ID))]
+  
+  for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
+    tmp = terra::vect(fgdb, layer = fc_list[i])
+    tmp = terra::cells(rast_biov1,tmp)
+    tmp_cell = tmp[,2]
+    tmp_vals = rast_biov1[tmp_cell][,1]
+    rast_biov1[tmp_cell] = tmp_vals+1
+  }
+  names(rast_biov1) <- "SA"
+  rast_biov1[rast_biov1==0] <- NA
+  
+  writeRaster(rast_biov1, here::here("Data/raster_bioshifts_SA_pop-level.tif"), overwrite = TRUE)
+  
+} else {
+  rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA_pop-level.tif"))
+  rast_biov1 <- crop(rast_biov1, ext(mundi))
+}
+
+values_biov1 <- na.omit(values(rast_biov1))
+
+plot_data <- gen_div %>%
+  dplyr::filter(spp %in% biov1$sp_name_std_v1) %>%
+  mutate(x = round(long,3),
+         y = round(lat,3))
+
+gen_fig <- ggplot()+
+  geom_spatvector(data=mundi)+
+  geom_hex(data=plot_data,
+           binwidth = c(4, 4),
+           aes(x=x, y=y))+
+  scale_fill_continuous(trans="log", 
+                        alpha=.7,
+                        labels=function(x) round(x,0),
+                        breaks=function(x) exp(seq(log(min(x)),log(max(x)),length.out=5)),
+                        type = "viridis", name = "Species with\ngenetic data")+
+  theme_void()
+
+gen_fig +
+  ggtitle("Genetic diversity data")
+
+bio_fig <- ggplot() +
+  geom_spatraster(data=rast_biov1)+
+  scale_fill_whitebox_c(
+    name = "BioShifts\nstudy areas",
+    palette = "viridi",
+    alpha=.7,
+    na.value = "white",
+    # trans="log", 
+    # labels=function(x) round(x,0),
+    # breaks=function(x) exp(seq(log(min(x)),log(max(x)),length.out=5))
+    )+
+  geom_spatvector(data=mundi)+
+  theme_void()
+
+bio_fig +
+  ggtitle("Bioshifts study areas")
+
+bio_gen_fig <- bio_fig +
+  geom_spatvector(data=vect_div, alpha = .3)
+
+bio_gen_fig +
+  ggtitle("Genetic diversity data & BioShifts study areas")
+
+ggsave(filename = here::here("Figs/Map_pop-level_GD.pdf"), 
+       plot = bio_gen_fig, 
+       width = 12,
+       height = 5,
+       device = "pdf", 
+       units = "in")
+
+```
+
+
+```{r fig.width=10, fig.height=8}
+
+bio_gen_fig2 <- ggpubr::ggarrange(gen_fig,
+                                  bio_fig,
+                                  labels = c("A", "B"),
+                                  ncol=1)
+
+bio_gen_fig2
+
+ggsave(filename = here::here("Figs/Map_pop-level_GD2.pdf"), 
+       plot = bio_gen_fig2, 
+       width = 10,
+       height = 8,
+       device = "pdf", 
+       units = "in")
+
+```
+
+
+
+
+# Merge genetic and bioshifts data
+We tried several methods for merging genetic data and bioshifts. We decided that Method 5 is the best one.
+
+# Method 1 - Normal merge
+This is not the correct way to merge because it creates multiple false duplicates.
+```{r eval=FALSE, include=FALSE}
+
+gen_data_v1 <- append(list(gen_div), list(biov1[,-which(names(biov1) %in% names(gen_div[,-1]))])) %>% reduce(full_join, by='spp')
+gen_data_v1 <- gen_data_v1 %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1$spp)) # 309
+
+```
+
+# Method 2 - Median He per species
+This ignores spatial proximity of He values to range shift values.
+```{r eval=FALSE, include=FALSE}
+
+gen_div_avg <- gen_div %>%
+  group_by(spp) %>%
+  dplyr::summarise(N = length(spp),
+                   He = median(He_harm)) 
+
+#merge all data frames in list
+gen_data_v1_avg <- append(list(gen_div_avg), list(biov1)) %>% reduce(full_join, by='spp')
+gen_data_v1_avg <- gen_data_v1_avg %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1_avg$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_avg$shift_vel_sign)
+
+gen_data_v1_avg <- gen_data_v1_avg %>% dplyr::filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+# N species
+length(unique(gen_data_v1_avg$spp))
+
+```
+
+# Method 3 - Median He per Param & species
+
+Use lower latitude TE and higher latitude as LE (North Hemisphere).  
+Although this collects He values based on latitude, the proximity of He to the study areas where range shifts were observed is ignored.
+
+```{r eval=FALSE, include=FALSE, error=FALSE}
+
+gen_div_avg_2 <- gen_div %>%
+  dplyr::group_by(spp) %>%
+  dplyr::summarise(
+    LE = ifelse(lat>0, # weighted by latitude
+                weighted.mean(He_harm, lat),
+                weighted.mean(He_harm, 1/lat)), 
+    O = median(He_harm),
+    TE = ifelse(lat>0, # weighted by latitude
+                weighted.mean(He_harm, 1/lat),
+                weighted.mean(He_harm, lat))) %>%
+  gather(Param, He, -spp)
+
+#merge all data frames in list
+gen_data_v1_avg_2 <- append(list(gen_div_avg_2), list(biov1)) %>% reduce(full_join, by=c("spp","Param"))
+gen_data_v1_avg_2 <- gen_data_v1_avg_2 %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1_avg_2$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_avg_2$shift_vel_sign)
+
+gen_data_v1_avg_2 <- gen_data_v1_avg_2 %>% dplyr::filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+# N species
+length(unique(gen_data_v1_avg_2$spp))
+
+```
+
+# Method 4 - Based on distance
+
+Calculate distance weighted mean He for each species in the bioshifts database.  
+This method collects He values more close to the centroid of the study area.
+
+```{r eval=FALSE, include=FALSE, message=FALSE}
+
+# sp list
+m <- unique(biov1$spp[which(biov1$spp %in% gen_div$spp)])
+
+gen_data_v1_dist <- list()
+
+# sp2go="Alces alces"
+# sp2go="Sylvia atricapilla"
+for(i in 1:length(m)){ cat(i, "from", length(m), "\r")
+  sp2go <- m[i]
+  sub_gen <- subset(gen_div, spp == sp2go)
+  sub_gen_v <- terra::vect(sub_gen, 
+                           geom=c("long", "lat"), 
+                           crs = "+proj=longlat +datum=WGS84 +no_defs")
+  
+  sub_bio <- subset(biov1, spp == sp2go)
+  areas <- unique(sub_bio$ID)
+  
+  gen_data_v1_dist_tmp <- list()
+  
+  for(j in 1:length(areas)){
+    area2go <- areas[j]
+    sub_bio_area_j <- subset(sub_bio, ID == area2go)
+    sub_bio_area_j_v <- terra::vect(unique(sub_bio_area_j[,c("centroid.x", "centroid.y")]), 
+                                    geom=c("centroid.x", "centroid.y"), 
+                                    crs = "+proj=longlat +datum=WGS84 +no_defs")
+    
+    dists <- terra::distance(sub_bio_area_j_v, sub_gen_v)[1,]
+    
+    # the closest
+    dists_order <- order(dists)[1]
+    # sub_gen <- sub_gen[dists_order,]
+    
+    # gen_data_v1_dist_tmp[[j]] <- append(list(sub_gen), list(sub_bio_area_j)) %>% 
+    # reduce(full_join, by="spp")
+    
+    # weighted distance
+    wtd_he <- weighted.mean(sub_gen$He_harm, 1/dists) # inverse of the distance
+    sub_gen_tmp <- sub_gen[dists_order,]
+    sub_gen_tmp$He <- wtd_he
+    
+    gen_data_v1_dist_tmp[[j]] <- append(list(sub_gen_tmp), list(sub_bio_area_j)) %>% 
+      reduce(full_join, by="spp")
+  }
+  
+  gen_data_v1_dist[[i]] <- rbindlist(gen_data_v1_dist_tmp)
+  
+}
+
+gen_data_v1_dist <- rbindlist(gen_data_v1_dist)
+
+gen_data_v1_dist <- gen_data_v1_dist %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+# N species
+length(unique(gen_data_v1_dist$spp))
+
+# Use only plus plus or minus minus
+table(gen_data_v1_dist$shift_vel_sign)
+
+gen_data_v1_dist <- gen_data_v1_dist %>% dplyr::filter(shift_vel_sign == "pospos" | shift_vel_sign == "negneg")
+
+# N species
+length(unique(gen_data_v1_dist$spp))
+
+```
+
+
+# Method 5 - Based on location
+
+Get the closest He to the centroid (for O), to the max latitude (for LE, at the North hemisphere), and to the min latitude (for TE, at the North hemisphere) of the study area.
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# sp list
+m <- unique(biov1$spp[which(biov1$spp %in% gen_div$spp)])
+
+gen_data_v1_dist2 <- data.frame()
+
+# sp2go="Alces alces"
+# sp2go="Sylvia atricapilla"
+for(i in 1:length(m)){ cat(i, "from", length(m), "\r")
+  sp2go <- m[i]
+  
+  # subset genetic data
+  sub_gen <- subset(gen_div[,1:9], spp == sp2go)
+  sub_gen_v <- terra::vect(sub_gen, 
+                           geom=c("long", "lat"), 
+                           crs = "+proj=longlat +datum=WGS84 +no_defs")
+  
+  # subset bioshifts data
+  sub_bio <- subset(biov1, spp == sp2go)
+  
+  # study areas for species i
+  areas <- unique(sub_bio$ID)
+  
+  gen_data_v1_dist2_tmp <- data.frame()
+  
+  # get genetic data for species i in each study area
+  for(j in 1:nrow(sub_bio)){
+    
+    # bioshifts in study area j and range pos r
+    sub_bio_area_j_tmp <- sub_bio[j,]
+    
+    range_pos2go <- sub_bio_area_j_tmp$Param
+    
+    coord_names <- NA
+    coord_names <- if(range_pos2go == "O"){ c("centroid.x", "centroid.y") } else {coord_names}
+    coord_names <- if(range_pos2go == "LE" & sub_bio_area_j_tmp$centroid.y > 0){ c("max_lat.x", "max_lat.y") } else {coord_names}
+    coord_names <- if(range_pos2go == "LE" & sub_bio_area_j_tmp$centroid.y < 0){ c("min_lat.x", "min_lat.y") } else {coord_names}
+    coord_names <- if(range_pos2go == "TE" & sub_bio_area_j_tmp$centroid.y < 0){ c("max_lat.x", "max_lat.y") } else {coord_names}
+    coord_names <- if(range_pos2go == "TE" & sub_bio_area_j_tmp$centroid.y > 0){ c("min_lat.x", "min_lat.y") } else {coord_names}
+    
+    sub_bio_area_j_v = data.frame(sub_bio_area_j_tmp)[,coord_names]
+    names(sub_bio_area_j_v) <- c("long", "lat")
+    
+    sub_bio_area_j_v <- terra::vect(unique(sub_bio_area_j_v[,c("long", "lat")]), 
+                                    geom=c("long", "lat"), 
+                                    crs = "+proj=longlat +datum=WGS84 +no_defs")
+    
+    # plot(terra::vect(rbind(sub_gen[,c("long", "lat")], sub_bio_area_j_tmp[,c("long", "lat")]),
+    #  geom=c("long", "lat"),
+    #  crs = "+proj=longlat +datum=WGS84 +no_defs"))
+    # plot(sub_bio_area_j_v, col = "red", add=T)
+    
+    dists <- terra::distance(sub_bio_area_j_v, sub_gen_v)[1,]
+    dists_order <- order(dists)[1]
+    min_dist <- dists[dists_order] # distance to closest
+    
+    # the closest
+    sub_gen_tmp <- sub_gen[dists_order,]
+    sub_gen_tmp$min_dist <- min_dist
+    
+    # weighted distance
+    sub_gen_tmp$He_harm_w <- weighted.mean(sub_gen$He_harm, 1/(dists^2)) # inverse of the distance
+    sub_gen_tmp$He_harm2_w <- weighted.mean(sub_gen$He_harm2, 1/(dists^2)) # inverse of the distance
+    sub_gen_tmp$He_harm3_w <- weighted.mean(sub_gen$He_harm3, 1/(dists^2)) # inverse of the distance
+    
+    gen_data_v1_dist2_tmp <- rbind(gen_data_v1_dist2_tmp,
+                                   append(list(sub_gen_tmp), 
+                                          list(sub_bio_area_j_tmp)) %>%
+                                     reduce(full_join, by="spp"))
+    
+  }
+  
+  gen_data_v1_dist2 <- rbind(gen_data_v1_dist2,
+                             gen_data_v1_dist2_tmp)
+  
+}
+
+gen_data_v1_dist2 <- gen_data_v1_dist2 %>% dplyr::filter(!is.na(He), !is.na(SHIFT))
+
+```
+
+# Save data
+```{r}
+write.csv(gen_data_v1_dist2,here::here("Data/gen_data_final_distance_pop-level.csv"),row.names = FALSE)
+```
+
+# Explore data
+
+## The closest He vs distance weighted He
+```{r}
+plot(gen_data_v1_dist2$He_harm,gen_data_v1_dist2$He_harm_w)
+plot(gen_data_v1_dist2$He_harm2,gen_data_v1_dist2$He_harm2_w)
+plot(gen_data_v1_dist2$He_harm3,gen_data_v1_dist2$He_harm3_w)
+```
+
+## Compare shift values of the full bioshifts vs the subset (genetic) dataset
+```{r}
+
+toplot <- rbind(
+  data.frame(dataset = "Full", 
+             lags = biov1$lag2, 
+             shifts = biov1$SHIFT),
+  data.frame(dataset = "Subset", 
+             lags = gen_data_v1_dist2$lag2, 
+             shifts = gen_data_v1_dist2$SHIFT))
+
+# shift
+ggplot(toplot, aes(x = dataset, y=shifts, fill = dataset, color = dataset))+
+  geom_boxplot(alpha = .5, outlier.shape = NA)+
+  scale_y_continuous(limits = quantile(toplot$shifts, c(0.1, 0.9), na.rm = T))
+
+tapply(toplot$shifts, toplot$dataset, summary)
+
+mod1 <- aov(shifts~dataset, data = toplot)
+summary(mod1)
+
+```
+
+There are difference in mean values of lags, but no difference in mean shift values, between the full and subset datasets. 
+
+
+
+## SHIFT
+### General pattern
+#### He_harm
+```{r fig.height=4, fig.width=5, message=FALSE, warning=FALSE, message=FALSE, warning=FALSE}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")
+
+
+```
+
+#### He_harm2
+```{r fig.width=5, message=FALSE, warning=FALSE, fig.height=4}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")
+
+
+```
+
+#### He_harm3
+```{r fig.width=5, message=FALSE, warning=FALSE, fig.height=4}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")
+
+```
+
+### By Param
+
+#### He_harm
+```{r fig.width=10, fig.height=4, message=FALSE, warning=FALSE}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Param, scales = "free", ncol = 3)
+
+```
+
+#### He_harm2
+```{r fig.width=10, fig.height=4, message=FALSE, warning=FALSE}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Param, scales = "free", ncol = 3)
+
+```
+
+#### He_harm3
+```{r fig.width=10, fig.height=4}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Param, scales = "free", ncol = 3)
+
+```
+
+### By Group
+
+#### He_harm
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Group, scales = "free", ncol = 3)
+
+```
+
+#### He_harm2
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Group, scales = "free", ncol = 3)
+```
+
+#### He_harm3
+```{r fig.width=10, fig.height=10}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(.~Group, scales = "free", ncol = 3)
+```
+
+### By Group * Param
+
+#### He_harm
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(Group~Param, scales = "free")
+
+
+```
+
+#### He_harm2
+```{r fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm2, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(Group~Param, scales = "free")
+```
+
+#### He_harm3
+```{r fig.width=10, fig.height=10}
+gen_data_v1_dist2 %>%
+  dplyr::filter(Type == "LAT",
+                shift_vel_sign == "pospos") %>%
+  ggplot(aes(x = He_harm3, y = (abs(SHIFT)), color = abs(velocity)))+
+  ggtitle("Latitude")+
+  xlab("Genetic diversity (He harm logit)")+
+  ylab("Range shift (km/year)") +
+  scale_color_viridis_c(direction = -1)+
+  geom_point(alpha = .5, size = 3)+
+  theme_bw()+
+  geom_smooth(method = "lm", color = "black", size=1)+
+  stat_smooth(geom="line", method = "lm", alpha=0.3, se = FALSE, 
+              aes(by=as.factor(Article_ID)), color = "black")+
+  facet_wrap(Group~Param, scales = "free")
+```
+
+

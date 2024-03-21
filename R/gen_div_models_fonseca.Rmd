@@ -79,10 +79,12 @@ mydatatogo <- mydataset  %>%
     GD_sqrt = sqrt(GD),
     GD_log = log(GD),
     GD_log1p = log1p(GD),
+    LatGen = abs(Latitude),
+    LatGen_band = round(LatGen,0),
     
     # Methods
-    Lat = abs(Latitude),
-    Lat_band = round(Lat,0),
+    Lat = LatCentDeg,
+    Lon = LonCentDeg,
     ID.area = scale(ID.area),
     DUR = scale(DUR),
     LogExtent = log(Extent),
@@ -102,6 +104,8 @@ mydatatogo <- mydataset  %>%
   dplyr::select(
     # Genetic diversity
     GD, GD_log, GD_log1p, GD_sqrt, TajimasD,
+    LatGen, # latitudinal position where GD was collected
+    LatGen_band,
     # Shift
     SHIFT, SHIFT_abs, SHIFT_abs_log, SHIFT_abs_log1p, 
     # SHIFT_cor, SHIFT_cor_abs, SHIFT_cor_abs_log, SHIFT_cor_raw, SHIFT_abs_log_scale,
@@ -112,8 +116,7 @@ mydatatogo <- mydataset  %>%
     Article_ID, 
     Hemisphere,
     shift_vel_sign,
-    Lat, # latitudinal position where GD was collected
-    Lat_band,
+    Lat,Lon,
     DUR, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, NtempUnitsF,
     Param, Group, spp, Class, Order, Family, Genus, 
     ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Article_ID,
@@ -128,7 +131,7 @@ mydatatogo <- mydataset  %>%
 
 
 # transform continuous variables
-cont_vars <- c(1:14, 18:26, 44:47)
+cont_vars <- c(1:16, 20:28, 46:49)
 
 mydatatogo[,cont_vars] <- lapply(mydatatogo[,cont_vars], as.numeric)
 mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
@@ -186,7 +189,6 @@ We gather range shift estimates from the BioShifts database (Comte et al. 2020).
 In order to maximize the match of species when merging range shifts and GD datasets, we harmonize species names using a customized function that borrows from the R packages `rgbif` and `bdc`. Our final dataset includes `r nrow(mydatatogo)` shifts for `r length(unique(mydatatogo$spp))` species from `r length(unique(mydatatogo$Class))` major taxonomy classes (`r unique(mydatatogo$Class)`).
 
 ```{r message=FALSE, warning=FALSE}
-
 # N species
 length(unique(mydatatogo$spp))
 # 1890
@@ -257,7 +259,9 @@ mydatatogo %>% group_by(Class, Param) %>% tally
 # 16 Actinopterygii LE       16
 # 17 Actinopterygii TE       18
 
-table(mydatatogo$ContinuousGrain)
+# View(mydatatogo[,c(1,2,8,33:38)])
+
+summary(mydatatogo$NtempUnits)
 
 table(mydatatogo$Quality)
 
@@ -293,53 +297,111 @@ DT::datatable(c,
                              buttons = c('excel'))) %>%
   DT::formatStyle(columns = colnames(c), `fontSize` = '80%')
 
+
+```
+
+
+
+## Species lookup
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+fig <- plot_ly(mydatatogo, x = ~GD, y = ~vel_abs, z = ~SHIFT_abs, color = ~Class, 
+               text = ~paste('Species:', spp, '<br>Family:', Family, '<br>Order:', Order,'<br>ECO:', ECO)) %>% 
+  add_markers() %>% 
+  layout(scene = list(xaxis = list(title = 'GD'),
+                      yaxis = list(title = 'Isotherm shift'),
+                      zaxis = list(title = 'Range shift')))
+fig
+
+```
+
+### Example species
+
+```{r message=FALSE, warning=FALSE}
+
+##############################
+# species with low GD and low range shift
+tmp <- mydatatogo %>% 
+  filter(GD >0) %>%
+  filter(GD < quantile(GD, .1) & SHIFT_abs < quantile(SHIFT_abs, .1)) %>%
+  select(spp,Class,GD,SHIFT_abs) %>% 
+  group_by(spp,Class) %>%
+  summarise(GD = round(mean(GD),5),
+            SHIFT_abs = round(mean(SHIFT_abs),3)) %>%
+  arrange(GD)
+# these species
+tmp
+# from these classes
+table(tmp$Class) # mostly plants
+
+# do for each class
+my_classes <- unique(mydatatogo$Class)
+for(i in 1:length(my_classes)){
+  tmp <- mydatatogo %>% 
+    filter(GD >0) %>%
+    filter(Class == my_classes[i]) %>% 
+    filter(GD < quantile(GD, .1) & vel_abs < quantile(vel_abs, .1)) %>%
+    select(spp,Class) %>% 
+    unique()
+  print(tmp)
+}
+# there are no plants or arachinida in areas of slow velocity
+
+##############################
+# species with high dispersal capacity, low genetic diversity and fast range expansion at the leading edge
+tmp <- mydatatogo %>% 
+  filter(GD >0) %>%
+  filter(GD < quantile(GD, .1) & SHIFT_abs > quantile(SHIFT_abs, .9)) %>%
+  select(spp,Class,GD,SHIFT_abs) %>% 
+  group_by(spp,Class) %>%
+  summarise(GD = round(mean(GD),5),
+            SHIFT_abs = round(mean(SHIFT_abs),3))
+# these species
+tmp
+# from these classes
+table(tmp$Class) # mostly insects and 3 birds
+
+
+
 ```
 
 ## Histograms
 
 ### Per Class
-```{r fig.height=3,fig.width=7}
-
-tmp <- mydatatogo %>%
-  mutate(vel_abs=log1p(vel_abs),
-         SHIFT_abs=log1p(SHIFT_abs)) %>%
-  select(Class,GD,vel_abs,SHIFT_abs) %>%
-  gather(variable, value, -Class)
-
-avg_gd <- tmp %>%
-  filter(variable=="GD") %>%
-  group_by(Class) %>%
-  dplyr::summarise(avg=median(value))
-
-ggplot(mydatatogo %>%
-         select(Class,GD,vel_abs,SHIFT_abs) %>%
-         gather(variable, value, -Class) %>%
-         mutate(Class=factor(Class,levels = avg_gd$Class[order(avg_gd$avg)])), 
-       aes(value))+
-  geom_density(aes(fill=Class),alpha=.5)+
-  scale_x_log10()+
-  theme_classic() +
-  labs(y = "", x = "")+
-  facet_wrap(.~variable, scales = "free", ncol = 3)
+```{r fig.height=3,fig.width=10}
 
 p1 <- ggplot(mydatatogo, aes(SHIFT_abs))+
   geom_density(aes(fill=Class),alpha=.5)+
   scale_x_log10()+
+  scale_y_continuous(trans="log1p",labels = function(x)round(x,1))+
   theme_classic() +
-  labs(y = "", x = bquote('Absolute velocity of range shift '(km.yr^1)))
+  labs(y = "Density", x = bquote('Absolute velocity of range shift '(km.yr^1)))
 
 p2 <- ggplot(mydatatogo, aes(GD))+
   geom_density(aes(fill=Class),alpha=.5)+
   scale_x_log10()+
+  scale_y_continuous(trans="log1p",labels = function(x)round(x,1))+
   theme_classic() +
   labs(y = "", x = "Genetic diversity")
 
 p3 <- ggplot(mydatatogo, aes(vel_abs))+
-  # geom_histogram(binwidth = .5,aes(fill=Class),alpha=.5) +
-  geom_density(aes(fill=Class),alpha=.5) +
-  # scale_x_log10()+
+  # geom_histogram(binwidth = .5,aes(fill=Class),alpha=.5,color="black") +
+  geom_density(aes(fill=Class),alpha=.5,) +
+  scale_x_log10()+
+  scale_y_continuous(trans="log1p",labels = function(x)round(x,1))+
   theme_classic() +
   labs(y = "", x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)))
+
+legend <- cowplot::get_legend(
+  # create some space to the left of the legend
+  p1 + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+cowplot::plot_grid(plotlist = list(p1 + theme(legend.position = "none"), 
+                                   p2 + theme(legend.position = "none"), 
+                                   p3 + theme(legend.position = "none"), 
+                                   legend), 
+                   rel_widths = c(3,3,3,2), align = "v", nrow=1)
 
 ```
 
@@ -406,8 +468,9 @@ hist(mydatatogo$dist_edge/1000,
 ### SHIFT vs Velocity
 
 ```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
 ggplot(mydatatogo,
-       aes(x=vel_abs, y=SHIFT_abs))+
+       aes(x=vel_abs, y=SHIFT_abs, color=sqrt(GD)*100))+
   scale_x_continuous(
     trans="log",
     labels=function(x) round(x,3),
@@ -420,18 +483,22 @@ ggplot(mydatatogo,
     breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
                            max(mydatatogo$SHIFT_abs_log), 
                            length.out = 5),3)))+
-  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_color_viridis_c(option = "D", direction = -1) +
+  geom_point(alpha = .3, size = 3)+
   theme_classic()+ 
-  theme(aspect.ratio=1)+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
   labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
-       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = "Nucleotide diversity x100") +
   geom_smooth(method = "lm", color = "red")
 
 ```
 
 ```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
 ggplot(mydatatogo,
-       aes(x=vel_abs, y=SHIFT_abs))+
+       aes(x=vel_abs, y=SHIFT_abs, color=sqrt(GD)*100))+
   scale_x_continuous(
     trans="log",
     labels=function(x) round(x,3),
@@ -444,13 +511,46 @@ ggplot(mydatatogo,
     breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
                            max(mydatatogo$SHIFT_abs_log), 
                            length.out = 5),3)))+
-  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  scale_color_viridis_c(option = "D", direction = -1) +
+  geom_point(alpha = .3, size = 3)+
   theme_classic()+ 
-  theme(aspect.ratio=1)+
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
   labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
-       y = bquote('Absolute velocity of range shift '(km.yr^1))) +
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = "Nucleotide diversity x100") +
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
+
+```
+
+```{r fig.width=7, fig.height=9, message=FALSE, warning=FALSE}
+ggplot(mydatatogo,
+       aes(x=vel_abs, y=SHIFT_abs, color=sqrt(GD)*100))+
+  scale_x_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$vel_abs_log), 
+                           max(mydatatogo$vel_abs_log), 
+                           length.out = 5),3)))+
+  scale_y_continuous(
+    trans="log",
+    labels=function(x) round(x,3),
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
+  scale_color_viridis_c(option = "D", direction = -1) +
+  geom_point(alpha = .3, size = 3)+
+  theme_classic()+ 
+  theme(legend.justification = 1,
+        legend.position="top",
+        aspect.ratio=1)+
+  labs(x = bquote('Absolute velocity of isotherm shifts '(km.yr^1)), 
+       y = bquote('Absolute velocity of range shift '(km.yr^1)), 
+       color = "Nucleotide diversity x100") +
+  geom_smooth(method = "lm", color = "red") +
+  facet_wrap(.~Class,scales = "free_x")
 
 ```
 
@@ -547,6 +647,7 @@ ggplot(mydatatogo,
 
 ```
 
+
 ```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
 ggplot(mydatatogo,
        aes(x=vel_abs, y=GD))+
@@ -564,6 +665,55 @@ ggplot(mydatatogo,
   geom_smooth(method = "lm", color = "red") +
   facet_wrap(.~Param)
 ```
+
+### GD vs Latitude
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
+ggplot(mydatatogo,
+       aes(x=LatGen, y=GD))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = 'Absolute latitude from average GD centroid', 
+       y = "Nucleotide diversity") +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
+ggplot(mydatatogo,
+       aes(x=abs(Lat), y=GD))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = 'Absolute latitude from study area centroid',
+       y = "Nucleotide diversity") +
+  geom_smooth(method = "lm", color = "red")
+
+```
+
+
+
+### Velocity vs Latitude
+
+```{r message=FALSE, warning=FALSE, fig.width=5, fig.height=5}
+
+ggplot(mydatatogo,
+       aes(x=log(abs(Lat)), y=log(vel_abs)))+
+  geom_point(alpha = .3, size = 3, shape=21, fill = "black")+
+  theme_classic()+
+  theme(aspect.ratio=1)+
+  labs(x = 'Absolute latitude from study area centroid',
+       y = bquote('Absolute velocity of isotherm shifts '(km.yr^1))) +
+  geom_smooth(method = "lm", color = "red")
+
+summary(lm(log(vel_abs)~log(abs(Lat)),mydatatogo))
+
+```
+
+
 
 ### SHIFT vs TajimasD
 
@@ -592,11 +742,13 @@ ggplot(mydatatogo,
 
 ```{r fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
 ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs_log, color=vel_abs))+
+       aes(x=TajimasD, y=SHIFT_abs, color=vel_abs))+
   scale_y_continuous(
     trans="log",
     labels=function(x) round(x,3),
-    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), max(mydatatogo$SHIFT_abs_log), length.out = 6),3)))+
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
   scale_color_viridis_c(option = "inferno",direction=-1)+
   geom_point(alpha = .5, size = 3)+
   theme_classic()+
@@ -613,11 +765,13 @@ ggplot(mydatatogo,
 ```{r fig.height=7.5, fig.width=8, message=FALSE, warning=FALSE}
 
 ggplot(mydatatogo,
-       aes(x=TajimasD, y=SHIFT_abs_log, color=vel_abs))+
+       aes(x=TajimasD, y=SHIFT_abs, color=vel_abs))+
   scale_y_continuous(
     trans="log",
     labels=function(x) round(x,3),
-    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), max(mydatatogo$SHIFT_abs_log), length.out = 6),3)))+
+    breaks = exp(round(seq(min(mydatatogo$SHIFT_abs_log), 
+                           max(mydatatogo$SHIFT_abs_log), 
+                           length.out = 5),3)))+
   scale_color_viridis_c(option = "inferno",direction=-1)+
   geom_point(alpha = .5, size = 3)+
   theme_classic()+
