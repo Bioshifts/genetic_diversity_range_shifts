@@ -305,12 +305,12 @@ DT::datatable(c,
 ## Species lookup
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 
-fig <- plot_ly(mydatatogo, x = ~GD, y = ~vel_abs, z = ~SHIFT_abs, color = ~Class, 
+fig <- plot_ly(mydatatogo, x = ~GD, y = ~vel_abs_log, z = ~SHIFT_abs_log, color = ~Class, 
                text = ~paste('Species:', spp, '<br>Family:', Family, '<br>Order:', Order,'<br>ECO:', ECO)) %>% 
   add_markers() %>% 
   layout(scene = list(xaxis = list(title = 'GD'),
-                      yaxis = list(title = 'Isotherm shift'),
-                      zaxis = list(title = 'Range shift')))
+                      yaxis = list(title = 'Isotherm shift (log)'),
+                      zaxis = list(title = 'Range shift (log)')))
 fig
 
 ```
@@ -348,7 +348,7 @@ for(i in 1:length(my_classes)){
 # there are no plants or arachinida in areas of slow velocity
 
 ##############################
-# species with high dispersal capacity, low genetic diversity and fast range expansion at the leading edge
+# species with low genetic diversity and fast range shift
 tmp <- mydatatogo %>% 
   filter(GD >0) %>%
   filter(GD < quantile(GD, .1) & SHIFT_abs > quantile(SHIFT_abs, .9)) %>%
@@ -359,7 +359,21 @@ tmp <- mydatatogo %>%
 # these species
 tmp
 # from these classes
-table(tmp$Class) # mostly insects and 3 birds
+table(tmp$Class) # mostly insects and some birds
+
+##############################
+# species with low genetic diversity and fast range expansion at the leading edge
+tmp <- mydatatogo %>% 
+  filter(GD >0 & Param=="LE") %>%
+  filter(GD < quantile(GD, .1) & SHIFT_abs > quantile(SHIFT_abs, .9)) %>%
+  select(spp,Class,GD,SHIFT_abs) %>% 
+  group_by(spp,Class) %>%
+  summarise(GD = round(mean(GD),5),
+            SHIFT_abs = round(mean(SHIFT_abs),3))
+# these species
+tmp
+# from these classes
+table(tmp$Class) # mostly insects
 
 
 
