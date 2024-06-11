@@ -93,16 +93,18 @@ mydatatogo <- mydataset  %>%
         dist_edge # distance to the closest edge of the SA
     ) 
 
-
 # transform continuous variables
-cont_vars <- c(1:14, 20:26, 44:47)
+cont_vars <- c(1:14,18, 20:26, 44:47)
 
 mydatatogo[,cont_vars] <- lapply(mydatatogo[,cont_vars], as.numeric)
 mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
 
+##eliminating species with uncertain obs
+mydatatogo=subset(mydatatogo,spp!="Agrilus planipennis")
+mydatatogo=subset(mydatatogo,spp!="Chrysodeixis eriosoma")
+mydatatogo=droplevels(mydatatogo)
 
 ## Filter Classes with at least 5 species per Param
-
 n_sps = 10
 
 test <- mydatatogo %>%
@@ -120,20 +122,238 @@ mydatatogo <- mydatatogo %>%
 mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
 
 ## Extra fixes
-
-# Fix param levels
+# Set the reference param level to the centroid of species obs
 mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
 
-####
-# Calculate N obs per species for model weights
-N_obs_spp <- mydatatogo %>%
-    group_by(spp) %>%
-    tally()
+################################################################################
+###############Fit a single model with Param*GD*climate velocity################
+################################################################################
+#Obs are weighted to correct for imbalance in obs position (TE,CE,LE) and species frequency
+#A GLMM model are fitted to control for method heterogeneity that assessed species range shifts and phylogeny proximity
+#The model are bootstrapped to compute ccurate mean, CI95% and significance of effect size.
+gam_velxGDxedge1 <- as.formula(
+    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
+    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
+    (1 | Class)")
+s1=69 #the initial random seed
+nB=12000 #the number of bootstraps
 
-N_obs_spp$weight_obs_spp <- (1/N_obs_spp$n)*(1/nrow(N_obs_spp))
+#setting a local cluster
+my.cluster2 <- parallel::makeCluster(
+    nCPU, 
+    type = "PSOCK"
+)
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo","gam_velxGDxedge1","ranef"))
 
-mydatatogo <- merge(mydatatogo,N_obs_spp,by="spp")
-sum(mydatatogo$weight_obs_spp)
+#register cluster
+doParallel::registerDoParallel(cl = my.cluster2)
+
+ex=pblapply(1:nB, function(i) {
+    gc(reset=T)
+    print(i)
+    set.seed(s1+i)
+    
+    n1=sample(1:nrow(mydatatogo),rep=T,size=nrow(mydatatogo))
+    mydatatogo2=mydatatogo[n1,]
+    mydatatogoCE=subset(mydatatogo2,Param=="O")
+    x1=data.frame(table(mydatatogoCE$spp))
+    x1=subset(x1,Freq>0)
+    x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+    mydatatogoCE=merge(mydatatogoCE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    
+    mydatatogoLE=subset(mydatatogo2,Param=="LE")
+    x1=data.frame(table(mydatatogoLE$spp))
+    x1=subset(x1,Freq>0)
+    x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+    mydatatogoLE=merge(mydatatogoLE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    
+    mydatatogoTE=subset(mydatatogo2,Param=="TE")
+    x1=data.frame(table(mydatatogoTE$spp))
+    x1=subset(x1,Freq>0)
+    x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+    mydatatogoTE=merge(mydatatogoTE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    
+    mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
+    mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
+    mydatatogoLE$weight_obs_spp=mydatatogoLE$weight_obs_spp*(1/3)
+    
+    mydatatogo2=rbind(mydatatogoTE,mydatatogoCE,mydatatogoLE)
+    
+    gamX1 <- glmmTMB(gam_velxGDxedge1, 
+                     family = Gamma(link = "log"),
+                     weights = weight_obs_spp,
+                     REML=F,
+                     data = mydatatogo2)
+    
+    r2=round(MuMIn::r.squaredGLMM(gamX1),2)
+    r2=data.frame(r2m=r2[1,1],
+                  r2c=r2[1,2],
+                  moy_GD=mean(mydatatogo2$GD), 
+                  sd_GD=sd(mydatatogo2$GD),
+                  moy_VC=mean(mydatatogo2$vel_abs), 
+                  sd_VC=sd(mydatatogo2$vel_abs),
+                  nB=i)
+    
+    coeff=data.frame(summary(gamX1)$coeff$cond,
+                     var=row.names(summary(gamX1)$coeff$cond),
+                     nB=i)
+    
+    randEff=as.data.frame(ranef(gamX1,condVar=T))
+    randEff$nB=i
+    
+    return(list(r2,coeff,randEff))
+    
+}, cl = my.cluster2)
+
+parallel::stopCluster(cl = my.cluster2)
+
+nom="allW2"
+randEff=rlist::list.rbind(lapply(ex,"[[",3))
+coeff=rlist::list.rbind(lapply(ex,"[[",2))
+r2=rlist::list.rbind(lapply(ex,"[[",1))
+
+setwd(dir.out)
+write.table(r2,
+            paste0("R2_",nom,".csv"),
+            sep=";",dec=".",row=F)
+write.table(coeff,
+            paste0("coeff_",nom,".csv"),
+            sep=";",dec=".",row=F)
+write.table(randEff,paste0("randEff_",nom,".csv"),
+            sep=";",dec=".",row=F)
+
+#analysis of raw bootstrap output
+setwd(dir.out)
+resR2_ok_file <- read.csv2("summary_R2.csv",sep=";",dec=".",h=T)
+res_ok_file <- read.csv2("summary_coeff.csv",sep=";",dec=".",h=T)
+
+if(all(file.exists(resR2_ok_file,res_ok_file))){
+    
+    resR2_ok_file <- read.table(resR2_ok_file, sep=";", dec=".")
+    res_ok_file <- read.table(res_ok_file, sep=";", dec=".")
+    
+} else {
+    
+    #mod=c("allW","CEW","TEW","LEW","allW2")
+    mod='allW2'
+    
+    a=1
+    s1=10 #the seed to make reproducible random staff
+    nB=10000
+    
+    
+    for(i in 1:length(mod)){
+        print(a)
+        r2=read.csv2(paste0("R2_",mod[i],".csv"),sep=";",dec=".")
+        #r2$nB=1:nrow(r2)
+        r2a=subset(r2,is.na(r2m)==F)
+        print(paste(mod[i],': ',nrow(r2a),sep=""))
+        if(nrow(r2a)>=nB){ #random selection of nB bootstrap model (criteria: model convergence)
+            set.seed(s1)
+            r2a=r2a[sample(1:nrow(r2a),size=nB,replace=F),]
+        }
+        if(nrow(r2a)<nB){
+            print(paste0("sampling size is less than ",nB," bootstraps"))
+        }else{
+            resR2=data.frame(type="r2m",moy=mean(r2a$r2m),sd=sd(r2a$r2m),median=median(r2a$r2m),q025=quantile(r2a$r2m,probs=0.025),q975=quantile(r2a$r2m,probs=0.975))
+            resR2=rbind(resR2,data.frame(type="r2c",moy=mean(r2a$r2c),sd=sd(r2a$r2c),median=median(r2a$r2c),q025=quantile(r2a$r2c,probs=0.025),q975=quantile(r2a$r2c,probs=0.975)))
+            #resR2$n_sing=nrow(subset(r2a,sing==T))
+            resR2$model=mod[i]
+            
+            c1=read.csv2(paste("coeff_",mod[i],".csv",sep=""),sep=";",dec=".",h=T)
+            #c1$nB=rep(1:nrow(r2),each=nrow(c1)/6000)
+            c1=merge(c1,data.frame(nB=r2a$nB),by.x="nB",by.y="nB")
+            rr3=c1
+            
+            res=data.frame(var=names(tapply(rr3$Estimate,rr3$var,mean)),moy=tapply(rr3$Estimate,rr3$var,mean),sd=tapply(rr3$Estimate,rr3$var,sd),median=tapply(rr3$Estimate,rr3$var,median),q025=tapply(rr3$Estimate,rr3$var,quantile,probs=0.025),
+                           p975=tapply(rr3$Estimate,rr3$var,quantile,probs=0.975), pv.inf0=tapply(rr3$Estimate,rr3$var,test2,mu=0),pv.sup0=tapply(rr3$Estimate,rr3$var,test1,mu=0))
+            res$model=mod[i]
+            if(a==1){
+                resR2_ok=resR2
+                res_ok=res
+            }
+            else{
+                resR2_ok=rbind(resR2_ok,resR2)
+                res_ok=rbind(res_ok,res)
+            }
+            
+            a=a+1
+        }
+    }
+    
+    write.table(resR2_ok,
+                "summary_R2.csv",
+                sep=";",dec=".",row=F) 
+    
+    #R2 statistic computed from 5000 boostrap model:
+    #type= R2 type (r2m= marginal R2; r2c= conditional R2)
+    #moy= mean R2 value
+    #sd= R2 standard deviation value
+    #median= median R2 value
+    #q025= 2.5% quantile of the bootstrap distribution
+    #q975= 97.5% quantile of the bootstrap distribution
+    #n_sing= number of singular model
+    #model= model name abbreviation
+    
+    write.table(res_ok,
+                "summary_coeff.csv",
+                sep=";",dec=".",row=F) 
+    #coefficient statistics
+    #Var =  Term of the model
+    #moy = mean effect computed from the 5000 bootstrap model
+    #sd = standard deviation computed from the 5000 bootstrap model
+    #med = median effect computed from the 5000 bootstrap model
+    #q025 = 2.5% quantile of the bootstrap coefficient distribution
+    #q975 = 97.5% quantile of the bootstrap coefficient distribution
+    #pv.sup0 = p-value of the bootstrap test testing the significance of the effect (H0= coefficient equal to 0; H1= coefficient greater than 0)
+    #pv.inf0 = p-value of the bootstrap test testing the significance of the effect (H0= coefficient equal to 0; H1= coefficient lower than 0)
+    #model= model name abbreviation
+    
+    # #significant positive effect
+    # subset(res_ok,model=="allW" & pv.sup0<0.05)
+    # subset(res_ok,model=="CEW" & pv.sup0<0.05)
+    # subset(res_ok,model=="LEW" & pv.sup0<0.05)
+    # subset(res_ok,model=="TEW" & pv.sup0<0.05)
+    # subset(res_ok,model=="allW2" & pv.sup0<0.05)
+    # 
+    # #significant negative effect
+    # subset(res_ok,model=="allW" & pv.inf0<0.05)
+    # subset(res_ok,model=="CEW" & pv.inf0<0.05)
+    # subset(res_ok,model=="LEW" & pv.inf0<0.05)
+    # subset(res_ok,model=="TEW" & pv.inf0<0.05)
+    # subset(res_ok,model=="allW2" & pv.inf0<0.05)
+    # 
+    # #non-significant negative effect
+    # subset(res_ok,model=="allW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+    # subset(res_ok,model=="CEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+    # subset(res_ok,model=="LEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+    # subset(res_ok,model=="TEW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+    # subset(res_ok,model=="allW2" & pv.inf0>=0.05 & pv.sup0>=0.05)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ###############################################
 #below four models are fitted
