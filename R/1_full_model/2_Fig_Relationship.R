@@ -270,8 +270,6 @@ gg2 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
                           limits=c(0, 7),
                           breaks=c(seq(0,7,by=1)))  
 
-
-
 ## allW_LE GDeff
 setwd(dir.out)
 res=read.csv2("summary_GDeff_allW_LE.csv",
