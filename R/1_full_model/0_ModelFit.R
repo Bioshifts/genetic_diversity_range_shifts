@@ -1,15 +1,4 @@
-rm(list=ls())
-gc(reset=T)
-
-#define the data repository
-dir_in="/home/rbertrand/W/Bioshift/GD_study/data_Brunno_v02022024/" #to change accordingly to the location of the data
-setwd(dir_in)
-dir_out="/home/rbertrand/W/Bioshift/GD_study/boot_analysis/" #to change. It's the repository where the results are saved
-
-## Load libraries
-# remotes::install_github("bbolker/broom.mixed")
-
-#################################################
+################################################################################
 #required packages
 list.of.packages <- c(
     "doParallel", "parallel","foreach","pdftools","plotly",
@@ -22,13 +11,16 @@ new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"
 if(length(new.packages)) install.packages(new.packages)
 
 sapply(list.of.packages, require, character.only = TRUE)
+################################################################################
+#define the data repository
+dir_in="/home/rbertrand/W/Bioshift/GD_study/data_Brunno_v02022024/" #to change accordingly to the location of the data
+dir_out="/home/rbertrand/W/Bioshift/GD_study/boot_analysis/REMLF2" #to change. It's the repository where the results are saved
 
-
-## Load data
+# Load data
 setwd(dir_in)
-mydataset <- read.csv2("gen_data_final_fonseca.csv",sep=",",dec=".",h=T)
+mydataset <- read.csv2("gen_data_final_fonseca.csv",sep=",",dec=".",h=T) #file path in GitHub: /adaptive-potential/Data
 
-
+#Data selection
 ## Latitude data
 mydatatogo <- mydataset  %>%
     dplyr::filter(Type == "LAT",
