@@ -95,7 +95,8 @@ gg1 <- gg1 + geom_violin(trim = T,position = position_dodge(0.8), width=1.5 )+
                  data=rr4,
                  geom = "point",
                  color = "black",
-                 position = position_dodge(0.8)) +
+                 position = position_dodge(0.8),
+                 size=0.65) +
     scale_fill_manual(values = c("blanchedalmond", "steelblue1", "tan1"),
                       labels=c("Climate change velocity","Genetic diversity","Climate change velocity:Genetic diversity"))+
     theme(legend.position = c(0.6, 0.88),legend.title=element_blank(),legend.text = element_text(family="Arial",size = 8,colour="black"),
