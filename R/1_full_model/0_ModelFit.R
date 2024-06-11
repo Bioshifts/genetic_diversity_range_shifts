@@ -280,6 +280,10 @@ for(i in 1:length(mod)){
     }
 }
 
+write.table(r2a,
+            paste0("R2_",nom,"_sel10000.csv"),
+            sep=";",dec=".",row=F) #10000 selected bootstrapped models
+
 write.table(resR2_ok,
             "summary_R2.csv",
             sep=";",dec=".",row=F) 
