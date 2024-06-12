@@ -633,13 +633,13 @@ gg_leg<-gg_leg + theme(plot.margin = margin(0, 1.5, 0, 1, "cm"))
 gg_leg
 
 gg1 <- gg1+ theme(legend.position = "none")+
-    labs(tag = '(c)')+
-    theme(plot.tag.position = c(0.065, 0.975))
-gg2 <- gg2+ theme(legend.position = "none")+
     labs(tag = '(d)')+
     theme(plot.tag.position = c(0.065, 0.975))
-gg3 <- gg3+ theme(legend.position = "none")+
+gg2 <- gg2+ theme(legend.position = "none")+
     labs(tag = '(e)')+
+    theme(plot.tag.position = c(0.065, 0.975))
+gg3 <- gg3+ theme(legend.position = "none")+
+    labs(tag = '(f)')+
     theme(plot.tag.position = c(0.065, 0.975))
 
 png(paste0(dir.out,"/fig_2Dnobs.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
