@@ -3,7 +3,8 @@
 list.of.packages <- c(
     "doParallel", "parallel","foreach","pdftools","plotly",
     "pbapply","dplyr", "tidyr", "parallel",
-    "scales","effects","psych", "glmmTMB", "lme4", "lmerTest","here","rlist","ggtext","gridExtra","grid","lattice","viridis","performance","patchwork","cowplot","ggpubr") 
+    "scales","effects","psych", "glmmTMB", "lme4", "lmerTest","here","rlist",
+    "ggtext","gridExtra","grid","lattice","viridis","performance","patchwork","cowplot","ggpubr","ggnewscale") 
 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -365,9 +366,13 @@ gg_leg<-gg_leg +
     theme(plot.margin = margin(0, 3, 0, 0, "cm"))
 gg_leg
 
+p1a=p1
+p2a=p2
+p3a=p3
+gg_lega=gg_leg
 
 png(paste0(dir.out,"/fig3_VICeffectOnGD_v1.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
-(p1 + p2 + p3 + gg_leg ) + 
+(p1a + p2a + p3a + gg_lega ) + 
     plot_layout( nrow = 1, widths = c(1,1,1,0.4)) #+ # common axes => add axis_titles = "collect"
 #plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
 dev.off()
@@ -612,3 +617,658 @@ png(paste0(dir.out,"/fig3_GDeffectOnVIC_v1.png"),unit="cm",width=27,height=11,re
 dev.off()
 
 ####Important: the final fig3_v1 has been formatted on ppt
+
+################################################################################
+#####################Fig. v2: adding obs as background##########################
+################################################################################
+rampPallFunGD <- function(x){
+    tmp <- colorRampPalette(colors = c("#00AFBB", "#E7B800", "#FC4E07"))(length(x))
+    return(tmp)
+}
+
+rampPallFunGD2 <- function(x){
+    tmp <- colorRampPalette(colors = c("orange", "purple"))(length(x))
+    return(tmp)
+}
+
+GD_graph_params1 <- 
+    list(labs(x = "Genetic diversity", 
+              y = bquote('Velocity of range shift '(km.yr^1)),
+              color = bquote('Latitude (°)')), 
+         theme_classic(),  
+         theme(legend.title = element_text(angle = -90), 
+               legend.title.align = 0.5))
+
+GD_graph_params2 <- 
+    list(labs(x = "Genetic diversity", 
+              y = bquote('Velocity of range shift '(km.yr^1)),
+              color = bquote('Climate change velocity '(km.yr^1))),  
+         theme_classic(),  
+         theme(legend.title = element_text(angle = -90), 
+               legend.title.align = 0.5))
+
+
+
+###############exploring the climate change dependence of the genetic diversity effect 
+## Computing significant relationship
+## allW_TE GDeff
+t1=subset(mydatatogo,Param=="TE") #n=295 obs
+setwd(dir.out)
+res=read.csv2("summary_GDeff_allW_TE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var=="ParamTE"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(GD=v2,pred1,
+                     vel_abs=res$vel_abs[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+
+
+gg1 <- ggplot()+
+    geom_point(data=t1,aes(x=GD,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,34), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,0.02,by=0.01), 
+                       limits=c(0,0.025), expand=c(0,0),
+                       labels=c("0",as.character(seq(0.01,0.02,by=0.01))))+
+    scale_color_gradientn(colours = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))  
+gg1
+
+gg1=gg1+new_scale_colour() +
+    geom_line(data=predX1, aes(GD, pred1, color = vel_abs, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1)))  
+gg1
+
+
+## allW_CE GDeff
+t1=subset(mydatatogo,Param=="O") #2296 obs
+
+res=read.csv2("summary_GDeff_allW_CE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW")
+int=c1a$median[c1a$var=="(Intercept)"]
+dsel=subset(mydatatogo,Param=="O")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(GD=v2,pred1,
+                     vel_abs=res$vel_abs[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+summary(t1$SHIFT_abs)
+summary(t1$GD)
+summary(t1$Lat)
+gg2 <- ggplot()+
+    geom_point(data=t1,aes(x=GD,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,44), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,0.05,by=0.01), 
+                       limits=c(0,0.051), expand=c(0,0),
+                       labels=c("0",as.character(seq(0.01,0.05,by=0.01))))+
+    scale_color_gradientn(colours = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))  
+gg2
+
+gg2=gg2+new_scale_colour() +
+    geom_line(data=predX1, aes(GD, pred1, color = vel_abs, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1)))  
+gg2
+
+## allW_LE GDeff
+t1=subset(mydatatogo,Param=="LE") #2082 obs
+
+setwd(dir.out)
+res=read.csv2("summary_GDeff_allW_LE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW")
+int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var=="ParamLE"]
+
+dsel=subset(mydatatogo,Param=="LE")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v2-mean(mydatatogo$GD))/sd(mydatatogo$GD))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(GD=v2,pred1,
+                     vel_abs=res$vel_abs[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+res$ID=as.character(round(res$vel_abs,1))
+pred2$ID=as.character(round(pred2$vel_abs,1))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$vel_abs),max(resX$vel_abs),le=5),1)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(vel_abs) %>% summarise(x = mean(sig))
+
+summary(t1$SHIFT_abs)
+summary(t1$GD)
+summary(t1$Lat)
+gg3 <- ggplot()+
+    geom_point(data=t1,aes(x=GD,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,54), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,0.05,by=0.01), 
+                       limits=c(0,0.055), expand=c(0,0),
+                       labels=c("0",as.character(seq(0.01,0.05,by=0.01))))+
+    scale_color_gradientn(colours = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))
+gg3
+
+gg3=gg3+new_scale_colour() +
+    geom_line(data=predX1, aes(GD, pred1, color = vel_abs, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1)))  
+gg3
+
+
+gg4 <- ggplot(data=predX1, aes(GD, pred1, color = vel_abs, group=ID)) +
+    GD_graph_params +
+    scale_color_gradientn(colors = rampPallFunGD(sigcolor$x),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 7),
+                          breaks=c(seq(0,7,by=1)))  +
+    guides(colour = guide_colourbar(title.position = "left"))+
+    theme(legend.key.height = unit(1.6, "cm"),
+          legend.title = element_text(size = 12, angle = 90),
+          legend.title.align = 0.5,
+          legend.direction = "vertical")
+
+
+#chart formatting
+p1 <- gg1 + 
+    theme(legend.position = "none") + 
+    #labs(tag = '(a)') +
+    #theme(plot.tag.position = c(0.05, 1))
+    ggtitle("Trailing edge (TE)") +labs(tag = '(a)')+
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.tag.position = c(0.065, 0.975))
+
+p2 <- gg2 + 
+    theme(legend.position = "none") + 
+    #labs(tag = '(b)')+
+    #theme(plot.tag.position = c(-0.05, 1))
+    ggtitle("Centroid (CE)") +labs(tag = '(b)')+
+    theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- gg3 + 
+    # theme(legend.position = "none") + 
+    #labs(tag = '(c)')+
+    #theme(plot.tag.position = c(-0.05, 1))
+    ggtitle("Leading edge (LE)") + labs(tag = '(c)')+
+    theme(plot.title = element_text(hjust = 0.5))
+
+# legend <- cowplot::get_legend(gg3)
+# legend = cowplot::get_plot_component(gg3, 'guide_box',return_all = TRUE)
+# cowplot::ggdraw(legend)
+# gg_leg<-ggpubr::as_ggplot(legend) 
+# gg_leg<-gg_leg + 
+#     theme(plot.margin = margin(0, 3, 0, 0, "cm"))
+# gg_leg
+
+p1a=p1
+p2a=p2
+p3a=p3
+
+
+png(paste0(dir.out,"/fig3_VICeffectOnGD_v2.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
+(p1a + p2a + p3a) + 
+    plot_layout( nrow = 1, widths = c(1,1,1)) #+ # common axes => add axis_titles = "collect"
+#plot_annotation(tag_levels = list(c('(a)','(b)','(c)',''))) # figure tags
+dev.off()
+
+
+################################################################################
+###############Exploring the modulating effect of gentic diversity
+################################################################################
+rampPallFunGD <- function(x){
+    tmp <- colorRampPalette(colors = c("#00AFBB", "#E7B800", "#FC4E07"))(length(x))
+    return(tmp)
+}
+
+rampPallFunGD2 <- function(x){
+    tmp <- colorRampPalette(colors = c("orange", "purple"))(length(x))
+    return(tmp)
+}
+
+GD_graph_params1 <- 
+    list(labs(x = bquote('Climate change velocity '(km.yr^1)), 
+              y = bquote('Velocity of range shift '(km.yr^1)),
+              color = bquote('Latitude (°)')), 
+         theme_classic(),  
+         theme(legend.title = element_text(angle = -90), 
+               legend.title.align = 0.5))
+
+GD_graph_params2 <- 
+    list(labs(color = 'Genetic diversity'),  
+         theme_classic(),  
+         theme(legend.title = element_text(angle = -90), 
+               legend.title.align = 0.5))
+
+
+## allW
+## allW_TE GDeff
+t1=subset(mydatatogo,Param=="TE") #n=295 obs
+setwd(dir.out)
+res=read.csv2("summary_VAeff_allW_TE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
+
+int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var=="ParamTE"]
+
+dsel=subset(mydatatogo,Param=="TE")
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v1-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(vel_abs=v1,pred1,
+                     GD=res$GD[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+
+summary(t1$SHIFT_abs)
+summary(t1$vel_abs)
+summary(t1$Lat)
+gg1 <- ggplot()+
+    geom_point(data=t1,aes(x=vel_abs,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,34), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,5,by=1), 
+                       limits=c(0,5.7), 
+                       expand=c(0,0))+
+    scale_color_gradientn(colours = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))  
+gg1
+
+gg1=gg1+new_scale_colour() +
+    geom_line(data=predX1, aes(vel_abs, pred1, color = GD, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_viridis(name = bquote("Genetic diversity"), 
+                        guide = guide_colourbar(title.position = "right",barwidth = 1,barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.05,by=0.01)))
+gg1
+
+
+
+
+## allW_CE GDeff
+t1=subset(mydatatogo,Param=="O")
+res=read.csv2("summary_VAeff_allW_CE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW")
+int=c1a$median[c1a$var=="(Intercept)"]
+dsel=subset(mydatatogo,Param=="O")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v1-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(vel_abs=v1,pred1,
+                     GD=res$GD[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+summary(t1$SHIFT_abs)
+summary(t1$vel_abs)
+summary(t1$Lat)
+gg2 <- ggplot()+
+    geom_point(data=t1,aes(x=vel_abs,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,44), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,7,by=1), 
+                       limits=c(0,7), 
+                       expand=c(0,0))+
+    scale_color_gradientn(colours = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))  
+gg2
+
+gg2=gg2+new_scale_colour() +
+    geom_line(data=predX1, aes(vel_abs, pred1, color = GD, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_viridis(name = bquote("Genetic diversity"), 
+                        guide = guide_colourbar(title.position = "right",barwidth = 1,barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.05,by=0.01)))
+gg2
+
+
+## allW2_LE GDeff
+t1=subset(mydatatogo,Param=="LE")
+setwd(dir.out)
+res=read.csv2("summary_VAeff_allW_LE.csv",
+              sep=";",dec=".",h=T) 
+c1=read.csv2("summary_coeff.csv",
+             sep=";",dec=".",h=T)
+
+c1a=subset(c1,model=="allW")
+int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var=="ParamLE"]
+
+dsel=subset(mydatatogo,Param=="LE")
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))
+
+for(i in 1:nrow(res)){
+    pred1=exp(int+res$median[i]*((v1-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(vel_abs=v1,pred1,
+                     GD=res$GD[i],
+                     sig = ifelse(res$pv.inf0[i]<.05 | res$pv.sup0[i]<.05,1,0),
+                     lower = res$q025[i],
+                     upper = res$p975[i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
+    }
+}
+
+res$ID=as.character(round(res$GD,3))
+pred2$ID=as.character(round(pred2$GD,3))
+resX=subset(res,pv.inf0<0.05)
+if(nrow(resX>0)){
+    selN=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX=merge(pred2,data.frame(ID=as.character(selN),signifN=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX=pred2
+    predX$signifN=NA
+}
+
+resX=subset(res,pv.sup0<0.05)
+if(nrow(resX>0)){
+    selP=round(seq(min(resX$GD),max(resX$GD),le=5),3)
+    predX2=merge(predX,data.frame(ID=as.character(selP),signifP=1),by.x="ID",by.y="ID",all.x=T)
+}else{
+    predX2=predX
+    predX2$signifP=NA
+}
+
+predX1=subset(predX2,signifN==1 | signifP==1)
+
+sigcolor <- predX2 %>% group_by(GD) %>% summarise(x = mean(sig))
+
+summary(t1$SHIFT_abs)
+summary(t1$vel_abs)
+summary(t1$Lat)
+gg3 <- ggplot()+
+    geom_point(data=t1,aes(x=vel_abs,y=SHIFT_abs,color=Lat),alpha=6/10)+
+    GD_graph_params1 +
+    scale_y_continuous(breaks = seq(0,50,by=10), 
+                       limits=c(0,54), 
+                       expand=c(0,0))+
+    scale_x_continuous(breaks = seq(0,6,by=1), 
+                       limits=c(0,6), 
+                       expand=c(0,0))+
+    scale_color_gradientn(colors = rampPallFunGD2(1:10),
+                          guide = guide_colourbar(title.position = "right",
+                                                  barwidth = 1, barheight = 8),
+                          limits=c(0, 85),
+                          breaks=c(seq(0,80,by=20)))  
+gg3
+
+gg3=gg3+new_scale_colour() +
+    geom_line(data=predX1, aes(vel_abs, pred1, color = GD, group=ID),linewidth = 0.75)+
+    GD_graph_params2 +
+    scale_color_viridis(name = bquote("Genetic diversity"), 
+                        guide = guide_colourbar(title.position = "right",barwidth = 1,barheight = 8),
+                        limits=c(0, 0.055),
+                        breaks=c(seq(0,0.05,by=0.01)))
+gg3
+
+#formatting chart
+p1 <- gg1 + 
+    theme(legend.position = "none")+ 
+    #labs(tag = '(a)') +
+    #theme(plot.tag.position = c(0.05, 1))
+    ggtitle("Trailing edge (TE)") +labs(tag = '(e)')+
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.tag.position = c(0.065, 0.975))
+
+p2 <- gg2 + 
+    theme(legend.position = "none") +
+    #labs(tag = '(b)')+
+    #theme(plot.tag.position = c(-0.05, 1))
+    ggtitle("Centroid (CE)") +labs(tag = '(f)')+
+    theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- gg3 + 
+    #theme(legend.position = "none") + 
+    #labs(tag = '(c)')+
+    #theme(plot.tag.position = c(-0.05, 1))
+    ggtitle("Leading edge (LE)") + labs(tag = '(g)')+
+    theme(plot.title = element_text(hjust = 0.5))
+
+# legend <- cowplot::get_legend(gg3)
+# gg_leg<-ggpubr::as_ggplot(legend) 
+# gg_leg<-gg_leg + 
+#     theme(plot.margin = margin(0, 3, 0, 0, "cm"))
+# gg_leg
+
+
+png(paste0(dir.out,"/fig3_GDeffectOnVIC_v2.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
+(p1 + p2 + p3) + 
+    plot_layout(nrow = 1, widths = c(1,1,1)) #+ # common axes => add axis_titles = "collect"
+#plot_annotation(tag_levels = list(c('(a)','(b)','(c)','(d)'))) # figure tags
+dev.off()
+
+####Important: the final fig3_v1 has been formatted on ppt
+
+
