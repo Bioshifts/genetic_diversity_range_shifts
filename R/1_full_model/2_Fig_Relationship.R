@@ -1269,6 +1269,5 @@ png(paste0(dir.out,"/fig3_GDeffectOnVIC_v2.png"),unit="cm",width=27,height=11,re
 #plot_annotation(tag_levels = list(c('(a)','(b)','(c)','(d)'))) # figure tags
 dev.off()
 
-####Important: the final fig3_v1 has been formatted on ppt
 
 
