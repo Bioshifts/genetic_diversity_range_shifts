@@ -137,8 +137,8 @@ rampPallFunGD <- function(x){
 GD_graph_params <- 
     list(geom_line(linewidth = 1), 
          labs(x = "Genetic diversity", 
-              y = bquote('Velocity of range shift '(km.yr^1)),
-              color = bquote('Climate change velocity '(km.yr^1))), 
+              y = bquote('Velocity of range shift '(km.yr^-1)),
+              color = bquote('Climate change velocity '(km.yr^-1))), 
          theme_classic(),  
          scale_x_continuous(n.breaks = 5, 
                             limits=c(0,0.055), expand=c(0,0),
@@ -380,8 +380,8 @@ dev.off()
 ###############Exploring the modulating effect of gentic diversity
 GD_graph_params <- 
     list(geom_line(linewidth = 1), 
-         labs(x = bquote('Climate change velocity '(km.yr^1)), 
-              y = bquote('Velocity of range shift '(km.yr^1)),
+         labs(x = bquote('Climate change velocity '(km.yr^-1)), 
+              y = bquote('Velocity of range shift '(km.yr^-1)),
               color = "Genetic diversity"), 
          theme_classic(),  
          scale_x_continuous(breaks = seq(0,7,by=1), 
@@ -633,7 +633,7 @@ rampPallFunGD2 <- function(x){
 
 GD_graph_params1 <- 
     list(labs(x = "Genetic diversity", 
-              y = bquote('Velocity of range shift '(km.yr^1)),
+              y = bquote('Velocity of range shift '(km.yr^-1)),
               color = bquote('Latitude (°)')), 
          theme_classic(),  
          theme(legend.title = element_text(angle = -90), 
@@ -641,8 +641,8 @@ GD_graph_params1 <-
 
 GD_graph_params2 <- 
     list(labs(x = "Genetic diversity", 
-              y = bquote('Velocity of range shift '(km.yr^1)),
-              color = bquote('Climate change velocity '(km.yr^1))),  
+              y = bquote('Velocity of range shift '(km.yr^-1)),
+              color = bquote('Climate change velocity '(km.yr^-1))),  
          theme_classic(),  
          theme(legend.title = element_text(angle = -90), 
                legend.title.align = 0.5))
@@ -971,8 +971,8 @@ rampPallFunGD2 <- function(x){
 }
 
 GD_graph_params1 <- 
-    list(labs(x = bquote('Climate change velocity '(km.yr^1)), 
-              y = bquote('Velocity of range shift '(km.yr^1)),
+    list(labs(x = bquote('Climate change velocity '(km.yr^-1)), 
+              y = bquote('Velocity of range shift '(km.yr^-1)),
               color = bquote('Latitude (°)')), 
          theme_classic(),  
          theme(legend.title = element_text(angle = -90), 
