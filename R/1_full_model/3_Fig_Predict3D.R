@@ -156,7 +156,8 @@ dsel=subset(mydatatogo,Param=="TE")
 
 dsel$GD2=round(dsel$GD,4)
 dsel$vel_abs2=round(dsel$vel_abs,1)
-kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+#kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
 
 #3D plots of the 2D kernel (we see where obs. are)
 fig <- plot_ly(x = kd$x, y = kd$y, z = kd$z) %>% add_surface()
@@ -201,7 +202,8 @@ x_te
 
 kd_te=kd
 
-
+#pred2=subset(pred2,GD<=max(dsel$GD2))
+#pred2=subset(pred2,vel_abs<=max(dsel$vel_abs2))
 pred2=pred2[order(pred2$vel_abs),]
 pred2=pred2[order(pred2$GD),]
 z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
@@ -213,7 +215,7 @@ pal2 <- jet.colors2(100)
 z=z1
 z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
 col.ind2 <- cut(z.facet.center, 100)
-col.ind2[z.facet.center<0.5]="#FFFFFF"
+col.ind2[z.facet.center<0.1]="#FFFFFF"
 s1=1:round(max(z.facet.center),0)
 col.ind3 <- cut(s1, 100)
 
@@ -225,6 +227,8 @@ with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=
                  xlab="Genetic diversity",
                  ylab='Climate change velocity ',
                  zlab="Predictions of range shift velocity ",
+                 #xlim=c(0,max(dsel$GD2)),
+                 #ylim=c(0,max(dsel$vel_abs2)),
                  cex.lab=0.75,
                  cex.axis=0.75))
 
@@ -233,11 +237,11 @@ rX2=r1
 rX2[]=sample(1:100,size=ncell(r1),rep=T)
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20),max(s1))]),labels=F)
-     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20))]),labels=F)
+     ,legend.args=list(text="Density of observations", side=4,font=2, line=1.2, cex=0.65))
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20),max(s1))]),labels=c(1,seq(20,100,by=20),max(s1)),cex.axis=0.5))
+     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20))]),labels=c(1,seq(20,100,by=20)),cex.axis=0.5))
 
 dev.off()
 
@@ -297,7 +301,9 @@ dsel=subset(mydatatogo,Param=="O")
 
 dsel$GD2=round(dsel$GD,4)
 dsel$vel_abs2=round(dsel$vel_abs,1)
-kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+#kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
+
 
 #3D plots of the 2D kernel (we see where obs. are)
 fig <- plot_ly(x = kd$x, y = kd$y, z = kd$z) %>% add_surface()
@@ -354,7 +360,7 @@ pal2 <- jet.colors2(100)
 z=z1
 z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
 col.ind2 <- cut(z.facet.center, 100)
-col.ind2[z.facet.center<0.5]="#FFFFFF"
+col.ind2[z.facet.center<0.01]="#FFFFFF"
 s1=1:round(max(z.facet.center),0)
 col.ind3 <- cut(s1, 100)
 
@@ -375,7 +381,7 @@ rX2[]=sample(1:100,size=ncell(r1),rep=T)
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
      ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=F)
-     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+     ,legend.args=list(text="Density of observations", side=4,font=2, line=1.2, cex=0.65))
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
      ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=c(1,seq(20,60,by=20),max(s1)),cex.axis=0.5))
@@ -438,7 +444,9 @@ dsel=subset(mydatatogo,Param=="LE")
 
 dsel$GD2=round(dsel$GD,4)
 dsel$vel_abs2=round(dsel$vel_abs,1)
-kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+#kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
+
 
 #3D plots of the 2D kernel (we see where obs. are)
 fig <- plot_ly(x = kd$x, y = kd$y, z = kd$z) %>% add_surface()
@@ -495,7 +503,7 @@ pal2 <- jet.colors2(100)
 z=z1
 z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
 col.ind2 <- cut(z.facet.center, 100)
-col.ind2[z.facet.center<0.5]="#FFFFFF"
+col.ind2[z.facet.center<0.1]="#FFFFFF"
 s1=1:round(max(z.facet.center),0)
 col.ind3 <- cut(s1, 100)
 
@@ -516,7 +524,7 @@ rX2[]=sample(1:100,size=ncell(r1),rep=T)
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
      ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=F)
-     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+     ,legend.args=list(text="Density of observations", side=4,font=2, line=1.2, cex=0.65))
 
 plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
      ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=c(1,seq(25,175,by=25),max(s1)),cex.axis=0.5))
@@ -621,10 +629,10 @@ gg=ggplot(data = r1_df, aes(x =GD, y = vel_abs, fill = n2))
 gg <- gg + geom_tile(color="grey", size=0.1)
 #gg<-  gg + theme_minimal()
 gg <- gg + scale_fill_viridis(option="B",
-                              name = stringr::str_wrap("Number of observations"), 
+                              name = stringr::str_wrap("Density of observations"), 
                               guide = guide_colourbar(title.position = "left",barwidth = 1,barheight = 15),
                               limits=c(0.1, 210),
-                              breaks=c(1,seq(50,200,by=50)),
+                              breaks=c(1,seq(25,200,by=25)),
                               na.value = "white",
                               direction=-1)
 
@@ -678,10 +686,10 @@ gg=ggplot(data = r1_df, aes(x =GD, y = vel_abs, fill = n2))
 gg <- gg + geom_tile(color="grey", size=0.1)
 #gg<-  gg + theme_minimal()
 gg <- gg + scale_fill_viridis(option="B",
-                              name = stringr::str_wrap("Number of observations"), 
+                              name = stringr::str_wrap("Density of observations"), 
                               guide = guide_colourbar(title.position = "left",barwidth = 1,barheight = 15),
-                              limits=c(0, 210),
-                              breaks=c(1,seq(50,200,by=50)),
+                              limits=c(0.1, 210),
+                              breaks=c(1,seq(25,200,by=25)),
                               na.value = "white",
                               direction=-1)
 
@@ -734,10 +742,10 @@ gg=ggplot(data = r1_df, aes(x =GD, y = vel_abs, fill = n2))
 gg <- gg + geom_tile(color="grey", size=0.1)
 #gg<-  gg + theme_minimal()
 gg <- gg + scale_fill_viridis(option="B",
-                              name = stringr::str_wrap("Number of observations"), 
+                              name = stringr::str_wrap("Density of observations"), 
                               guide = guide_colourbar(title.position = "left",barwidth = 1,barheight = 15),
-                              limits=c(0, 210),
-                              breaks=c(1,seq(50,200,by=50)),
+                              limits=c(0.1, 210),
+                              breaks=c(1,seq(25,200,by=25)),
                               na.value = "white",
                               direction=-1)
 
