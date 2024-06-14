@@ -3,8 +3,7 @@
 list.of.packages <- c(
     "doParallel", "parallel","foreach","pdftools","plotly",
     "pbapply","dplyr", "tidyr", "parallel",
-    "scales","effects","psych", "glmmTMB", "lme4", "lmerTest","here","rlist","raster","RColorBrewer",
-    "ggtext","gridExtra","grid","lattice","viridis","performance","patchwork","cowplot","ggpubr","ggnewscale","plot.matrix","plotly","DT","ggthemes") 
+    "scales","effects","psych", "glmmTMB", "lme4", "lmerTest","here","rlist","ggtext","gridExtra","grid","lattice","viridis","performance","MuMIn") 
 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -126,6 +125,17 @@ mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x,
 # Set the reference param level to the centroid of species obs
 mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
 
+################################################################################
+#extra required packages
+list.of.packages <- c("raster","RColorBrewer","rgl",
+                      "patchwork","cowplot","ggpubr","ggnewscale","plot.matrix","plotly","DT","ggthemes","fields") 
+
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
 
 ############################Figure v1###########################################
 # just a try with volcano dataset - volcano is a numeric matrix that ships with R
@@ -190,6 +200,47 @@ x_te <- x %>% layout(scene = list(xaxis = list(title = 'Genetic diversity', show
 x_te  
 
 kd_te=kd
+
+
+pred2=pred2[order(pred2$vel_abs),]
+pred2=pred2[order(pred2$GD),]
+z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
+jet.colors2 <- colorRampPalette( c("red","orange","yellow","green") ) 
+pal2 <- jet.colors2(100)
+#col.ind2 <- col.ind
+#col.ind2 <- pal2[col.ind]
+#col.ind2[z1<0.5]="#FFFFFF"
+z=z1
+z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
+col.ind2 <- cut(z.facet.center, 100)
+col.ind2[z.facet.center<0.5]="#FFFFFF"
+s1=1:round(max(z.facet.center),0)
+col.ind3 <- cut(s1, 100)
+
+png(paste0(dir.out,"/fig_pred3D_TE.png"),unit="cm",width=11,height=11,res=300)#,width=547,height=360
+
+par(mar=c(0,2,0,4))
+with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
+                 col=pal2[col.ind2],ticktype = "detailed", phi=10, theta=30,border="grey80",lwd=0.2,
+                 xlab="Genetic diversity",
+                 ylab='Climate change velocity ',
+                 zlab="Predictions of range shift velocity ",
+                 cex.lab=0.75,
+                 cex.axis=0.75))
+
+r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
+rX2=r1
+rX2[]=sample(1:100,size=ncell(r1),rep=T)
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20),max(s1))]),labels=F)
+     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20),max(s1))]),labels=c(1,seq(20,100,by=20),max(s1)),cex.axis=0.5))
+
+dev.off()
+
 
 #######################a 2d plot reresenting predictions of the model
 #TE
@@ -291,6 +342,47 @@ x_ce
 
 kd_ce=kd
 
+
+pred2=pred2[order(pred2$vel_abs),]
+pred2=pred2[order(pred2$GD),]
+z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
+jet.colors2 <- colorRampPalette( c("red","orange","yellow","green") ) 
+pal2 <- jet.colors2(100)
+#col.ind2 <- col.ind
+#col.ind2 <- pal2[col.ind]
+#col.ind2[z1<0.5]="#FFFFFF"
+z=z1
+z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
+col.ind2 <- cut(z.facet.center, 100)
+col.ind2[z.facet.center<0.5]="#FFFFFF"
+s1=1:round(max(z.facet.center),0)
+col.ind3 <- cut(s1, 100)
+
+png(paste0(dir.out,"/fig_pred3D_CE.png"),unit="cm",width=11,height=11,res=300)#,width=547,height=360
+
+par(mar=c(0,2,0,4))
+with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
+                 col=pal2[col.ind2],ticktype = "detailed", phi=10, theta=-40,border="grey80",lwd=0.2,
+                 xlab="Genetic diversity",
+                 ylab='Climate change velocity ',
+                 zlab="Predictions of range shift velocity ",
+                 cex.lab=0.75,
+                 cex.axis=0.75))
+
+r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
+rX2=r1
+rX2[]=sample(1:100,size=ncell(r1),rep=T)
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=F)
+     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=c(1,seq(20,60,by=20),max(s1)),cex.axis=0.5))
+
+dev.off()
+
+
 #######################a 2d plot reresenting predictions of the model
 #CE
 r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
@@ -334,7 +426,7 @@ gg2=gg
 gg2
 
 
-## allW2_TE
+## allW2_LE
 setwd(dir.out)
 c1=read.csv2("summary_coeff.csv",
              sep=";",dec=".",h=T)
@@ -390,6 +482,47 @@ x_le <- x %>% layout(scene = list(xaxis = list(title = 'Genetic diversity', show
 x_le  
 
 kd_le=kd
+
+
+pred2=pred2[order(pred2$vel_abs),]
+pred2=pred2[order(pred2$GD),]
+z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
+jet.colors2 <- colorRampPalette( c("red","orange","yellow","green") ) 
+pal2 <- jet.colors2(100)
+#col.ind2 <- col.ind
+#col.ind2 <- pal2[col.ind]
+#col.ind2[z1<0.5]="#FFFFFF"
+z=z1
+z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
+col.ind2 <- cut(z.facet.center, 100)
+col.ind2[z.facet.center<0.5]="#FFFFFF"
+s1=1:round(max(z.facet.center),0)
+col.ind3 <- cut(s1, 100)
+
+png(paste0(dir.out,"/fig_pred3D_LE.png"),unit="cm",width=11,height=11,res=300)#,width=547,height=360
+
+par(mar=c(0,2,0,4))
+with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
+                 col=pal2[col.ind2],ticktype = "detailed", phi=10, theta=-160,border="grey80",lwd=0.2,
+                 xlab="Genetic diversity",
+                 ylab='Climate change velocity ',
+                 zlab="Predictions of range shift velocity ",
+                 cex.lab=0.75,
+                 cex.axis=0.75))
+
+r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
+rX2=r1
+rX2[]=sample(1:100,size=ncell(r1),rep=T)
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=F)
+     ,legend.args=list(text="Number of observations", side=4,font=2, line=1.2, cex=0.65))
+
+plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
+     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=c(1,seq(25,175,by=25),max(s1)),cex.axis=0.5))
+
+dev.off()
+
 
 #######################a 2d plot reresenting predictions of the model
 #LE
