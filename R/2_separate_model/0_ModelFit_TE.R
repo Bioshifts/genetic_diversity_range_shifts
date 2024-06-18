@@ -134,7 +134,7 @@ mydatatogo=subset(mydatatogo,Param=="TE")
 #A GLMM model are fitted to control for method heterogeneity that assessed species range shifts and phylogeny proximity
 #The model are bootstrapped to compute ccurate mean, CI95% and significance of effect size.
 gam_velxGDxedge1 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
+    "SHIFT_abs ~ scale(vel_abs) * scale(GD) + 
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
     (1 | Class)")
 s1=69 #the initial random seed
@@ -158,30 +158,11 @@ ex=pblapply(1:nB, function(i) {
     
     n1=sample(1:nrow(mydatatogo),rep=T,size=nrow(mydatatogo))
     mydatatogo2=mydatatogo[n1,]
-    mydatatogoCE=subset(mydatatogo2,Param=="O")
-    x1=data.frame(table(mydatatogoCE$spp))
+    x1=data.frame(table(mydatatogo2$spp))
     x1=subset(x1,Freq>0)
     x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoCE=merge(mydatatogoCE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-    
-    mydatatogoLE=subset(mydatatogo2,Param=="LE")
-    x1=data.frame(table(mydatatogoLE$spp))
-    x1=subset(x1,Freq>0)
-    x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoLE=merge(mydatatogoLE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-    
-    mydatatogoTE=subset(mydatatogo2,Param=="TE")
-    x1=data.frame(table(mydatatogoTE$spp))
-    x1=subset(x1,Freq>0)
-    x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoTE=merge(mydatatogoTE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-    
-    mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
-    mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
-    mydatatogoLE$weight_obs_spp=mydatatogoLE$weight_obs_spp*(1/3)
-    
-    mydatatogo2=rbind(mydatatogoTE,mydatatogoCE,mydatatogoLE)
-    
+    mydatatogo2=merge(mydatatogo2[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+
     gamX1 <- glmmTMB(gam_velxGDxedge1, 
                      family = Gamma(link = "log"),
                      weights = weight_obs_spp,
@@ -211,7 +192,7 @@ ex=pblapply(1:nB, function(i) {
 
 parallel::stopCluster(cl = my.cluster2)
 
-nom="allW"
+nom="TE"
 randEff=rlist::list.rbind(lapply(ex,"[[",3))
 coeff=rlist::list.rbind(lapply(ex,"[[",2))
 r2=rlist::list.rbind(lapply(ex,"[[",1))
@@ -237,7 +218,7 @@ test2=function(x,mu=0){
 }
 
 
-mod='allW'
+mod='TE'
 a=1
 s1=10 #the seed to make reproducible random staff
 nB=10000
@@ -316,18 +297,18 @@ write.table(res_ok,
 
 
 # #significant positive effect
-subset(res_ok,model=="allW" & pv.sup0<0.05)
+subset(res_ok,model=="TE" & pv.sup0<0.05)
 
 # #significant negative effect
-subset(res_ok,model=="allW" & pv.inf0<0.05)
+subset(res_ok,model=="TE" & pv.inf0<0.05)
 
 # #non-significant negative effect
-subset(res_ok,model=="allW" & pv.inf0>=0.05 & pv.sup0>=0.05)
+subset(res_ok,model=="TE" & pv.inf0>=0.05 & pv.sup0>=0.05)
 
 ### Test climate velocity value for which GD is significant
-#### allW2 model
+#### TE model
 nB=r2a$nB
-c1=read.csv2("coeff_allW.csv",
+c1=read.csv2("coeff_TE.csv",
              sep=";",dec=".",h=T)
 dsel=mydatatogo
 v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
@@ -347,11 +328,7 @@ ex=pblapply(nB,function(i){
     print(i)
     c1a=subset(c1,nB==i)
     eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
-    tmp=data.frame(vel_abs=v1,GDeff_CE=eff)
-    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
-    tmp$GDeff_LE=eff
-    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
-    tmp$GDeff_TE=eff
+    tmp=data.frame(vel_abs=v1,GDeff_TE=eff)
     tmp$nB=i
     return(tmp)
 }, cl = my.cluster2)
@@ -361,23 +338,23 @@ parallel::stopCluster(cl = my.cluster2)
 ex <- do.call("rbind",ex)
 
 #summary statistics
-resCE=data.frame(vel_abs=names(tapply(ex$GDeff_CE,ex$vel_abs,mean)),
-                 moy=tapply(ex$GDeff_CE,ex$vel_abs,mean),
-                 sd=tapply(ex$GDeff_CE,ex$vel_abs,sd),
-                 median=tapply(ex$GDeff_CE,ex$vel_abs,median),
-                 q025=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.025),
-                 p975=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.975), 
-                 pv.inf0=tapply(ex$GDeff_CE,ex$vel_abs,test2,mu=0),
-                 pv.sup0=tapply(ex$GDeff_CE,ex$vel_abs,test1,mu=0))
-
-resLE=data.frame(vel_abs=names(tapply(ex$GDeff_LE,ex$vel_abs,mean)),
-                 moy=tapply(ex$GDeff_LE,ex$vel_abs,mean),
-                 sd=tapply(ex$GDeff_LE,ex$vel_abs,sd),
-                 median=tapply(ex$GDeff_LE,ex$vel_abs,median),
-                 q025=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.025),
-                 p975=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.975),
-                 pv.inf0=tapply(ex$GDeff_LE,ex$vel_abs,test2,mu=0),
-                 pv.sup0=tapply(ex$GDeff_LE,ex$vel_abs,test1,mu=0))
+# resCE=data.frame(vel_abs=names(tapply(ex$GDeff_CE,ex$vel_abs,mean)),
+#                  moy=tapply(ex$GDeff_CE,ex$vel_abs,mean),
+#                  sd=tapply(ex$GDeff_CE,ex$vel_abs,sd),
+#                  median=tapply(ex$GDeff_CE,ex$vel_abs,median),
+#                  q025=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.025),
+#                  p975=tapply(ex$GDeff_CE,ex$vel_abs,quantile,probs=0.975), 
+#                  pv.inf0=tapply(ex$GDeff_CE,ex$vel_abs,test2,mu=0),
+#                  pv.sup0=tapply(ex$GDeff_CE,ex$vel_abs,test1,mu=0))
+# 
+# resLE=data.frame(vel_abs=names(tapply(ex$GDeff_LE,ex$vel_abs,mean)),
+#                  moy=tapply(ex$GDeff_LE,ex$vel_abs,mean),
+#                  sd=tapply(ex$GDeff_LE,ex$vel_abs,sd),
+#                  median=tapply(ex$GDeff_LE,ex$vel_abs,median),
+#                  q025=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.025),
+#                  p975=tapply(ex$GDeff_LE,ex$vel_abs,quantile,probs=0.975),
+#                  pv.inf0=tapply(ex$GDeff_LE,ex$vel_abs,test2,mu=0),
+#                  pv.sup0=tapply(ex$GDeff_LE,ex$vel_abs,test1,mu=0))
 
 resTE=data.frame(vel_abs=names(tapply(ex$GDeff_TE,ex$vel_abs,mean)),
                  moy=tapply(ex$GDeff_TE,ex$vel_abs,mean),
@@ -390,29 +367,29 @@ resTE=data.frame(vel_abs=names(tapply(ex$GDeff_TE,ex$vel_abs,mean)),
 
 
 write.table(resTE,
-            "summary_GDeff_allW_TE.csv",
+            "summary_GDeff_TE.csv",
             sep=";",dec=".",row=F) 
-write.table(resCE,
-            "summary_GDeff_allW_CE.csv",
-            sep=";",dec=".",row=F) 
-write.table(resLE,
-            "summary_GDeff_allW_LE.csv",
-            sep=";",dec=".",row=F) 
+# write.table(resCE,
+#             "summary_GDeff_allW_CE.csv",
+#             sep=";",dec=".",row=F) 
+# write.table(resLE,
+#             "summary_GDeff_allW_LE.csv",
+#             sep=";",dec=".",row=F) 
 
-# #significant positive effect
-subset(resCE,pv.sup0<0.05)
-# #significant negative effect
-subset(resCE,pv.inf0<0.05)
-# #non-significant negative effect
-subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
+# # #significant positive effect
+# subset(resCE,pv.sup0<0.05)
+# # #significant negative effect
+# subset(resCE,pv.inf0<0.05)
+# # #non-significant negative effect
+# subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
 
 
-# #significant positive effect
-subset(resLE,pv.sup0<0.05)
-# #significant negative effect
-subset(resLE,pv.inf0<0.05)
-# #non-significant negative effect
-subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
+# # #significant positive effect
+# subset(resLE,pv.sup0<0.05)
+# # #significant negative effect
+# subset(resLE,pv.inf0<0.05)
+# # #non-significant negative effect
+# subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
 
 
 # #significant positive effect
@@ -423,7 +400,7 @@ subset(resTE,pv.inf0<0.05)
 subset(resTE,pv.inf0>=0.05 & pv.sup0>=0.05)
 
 ### Test GD value for which the climate velocity effect is significant
-c1=read.csv2("coeff_allW.csv",sep=";",dec=".",h=T)
+c1=read.csv2("coeff_TE.csv",sep=";",dec=".",h=T)
 dsel=mydatatogo
 v1=seq(round(min(dsel$GD),3),round(max(dsel$GD),3),by=0.001)
 
@@ -439,11 +416,7 @@ ex=pblapply(nB,function(i){
     print(i)
     c1a=subset(c1,nB==i)
     eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
-    tmp=data.frame(GD=v1,VAeff_CE=eff)
-    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
-    tmp$VAeff_LE=eff
-    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
-    tmp$VAeff_TE=eff
+    tmp=data.frame(GD=v1,VAeff_TE=eff)
     tmp$nB=i
     return(tmp)
 }, cl = my.cluster2)
@@ -453,23 +426,23 @@ parallel::stopCluster(cl = my.cluster2)
 ex <- do.call("rbind",ex)
 
 #summary statistictics
-resCE=data.frame(GD=names(tapply(ex$VAeff_CE,ex$GD,mean)),
-                 moy=tapply(ex$VAeff_CE,ex$GD,mean),
-                 sd=tapply(ex$VAeff_CE,ex$GD,sd),
-                 median=tapply(ex$VAeff_CE,ex$GD,median),
-                 q025=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.025),
-                 p975=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.975),
-                 pv.inf0=tapply(ex$VAeff_CE,ex$GD,test2,mu=0),
-                 pv.sup0=tapply(ex$VAeff_CE,ex$GD,test1,mu=0))
-
-resLE=data.frame(GD=names(tapply(ex$VAeff_LE,ex$GD,mean)),
-                 moy=tapply(ex$VAeff_LE,ex$GD,mean),
-                 sd=tapply(ex$VAeff_LE,ex$GD,sd),
-                 median=tapply(ex$VAeff_LE,ex$GD,median),
-                 q025=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.025),
-                 p975=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.975),
-                 pv.inf0=tapply(ex$VAeff_LE,ex$GD,test2,mu=0),
-                 pv.sup0=tapply(ex$VAeff_LE,ex$GD,test1,mu=0))
+# resCE=data.frame(GD=names(tapply(ex$VAeff_CE,ex$GD,mean)),
+#                  moy=tapply(ex$VAeff_CE,ex$GD,mean),
+#                  sd=tapply(ex$VAeff_CE,ex$GD,sd),
+#                  median=tapply(ex$VAeff_CE,ex$GD,median),
+#                  q025=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.025),
+#                  p975=tapply(ex$VAeff_CE,ex$GD,quantile,probs=0.975),
+#                  pv.inf0=tapply(ex$VAeff_CE,ex$GD,test2,mu=0),
+#                  pv.sup0=tapply(ex$VAeff_CE,ex$GD,test1,mu=0))
+# 
+# resLE=data.frame(GD=names(tapply(ex$VAeff_LE,ex$GD,mean)),
+#                  moy=tapply(ex$VAeff_LE,ex$GD,mean),
+#                  sd=tapply(ex$VAeff_LE,ex$GD,sd),
+#                  median=tapply(ex$VAeff_LE,ex$GD,median),
+#                  q025=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.025),
+#                  p975=tapply(ex$VAeff_LE,ex$GD,quantile,probs=0.975),
+#                  pv.inf0=tapply(ex$VAeff_LE,ex$GD,test2,mu=0),
+#                  pv.sup0=tapply(ex$VAeff_LE,ex$GD,test1,mu=0))
 
 resTE=data.frame(GD=names(tapply(ex$VAeff_TE,ex$GD,mean)),
                  moy=tapply(ex$VAeff_TE,ex$GD,mean),
@@ -481,29 +454,29 @@ resTE=data.frame(GD=names(tapply(ex$VAeff_TE,ex$GD,mean)),
                  pv.sup0=tapply(ex$VAeff_TE,ex$GD,test1,mu=0))
 
 write.table(resTE,
-            "summary_VAeff_allW_TE.csv",
+            "summary_VAeff_TE.csv",
             sep=";",dec=".",row=F) 
-write.table(resLE,
-            "summary_VAeff_allW_LE.csv",
-            sep=";",dec=".",row=F) 
-write.table(resCE,
-            "summary_VAeff_allW_CE.csv",
-            sep=";",dec=".",row=F) 
+# write.table(resLE,
+#             "summary_VAeff_allW_LE.csv",
+#             sep=";",dec=".",row=F) 
+# write.table(resCE,
+#             "summary_VAeff_allW_CE.csv",
+#             sep=";",dec=".",row=F) 
 
-# #significant positive effect
-subset(resCE,pv.sup0<0.05)
-# #significant negative effect
-subset(resCE,pv.inf0<0.05)
-# #non-significant negative effect
-subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
-
-
-# #significant positive effect
-subset(resLE,pv.sup0<0.05)
-# #significant negative effect
-subset(resLE,pv.inf0<0.05)
-# #non-significant negative effect
-subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
+# # #significant positive effect
+# subset(resCE,pv.sup0<0.05)
+# # #significant negative effect
+# subset(resCE,pv.inf0<0.05)
+# # #non-significant negative effect
+# subset(resCE,pv.inf0>=0.05 & pv.sup0>=0.05)
+# 
+# 
+# # #significant positive effect
+# subset(resLE,pv.sup0<0.05)
+# # #significant negative effect
+# subset(resLE,pv.inf0<0.05)
+# # #non-significant negative effect
+# subset(resLE,pv.inf0>=0.05 & pv.sup0>=0.05)
 
 
 # #significant positive effect
@@ -512,177 +485,3 @@ subset(resTE,pv.sup0<0.05)
 subset(resTE,pv.inf0<0.05)
 # #non-significant negative effect
 subset(resTE,pv.inf0>=0.05 & pv.sup0>=0.05)
-
-################################################################################
-##########exploring latitidinal effect on the fitted relationship###############
-################################################################################
-plot(Lat~GD,data=mydatatogo)
-plot(vel_abs~GD,data=mydatatogo)
-plot(Lat~vel_abs,data=mydatatogo)
-plot(log(SHIFT_abs)~vel_abs,data=mydatatogo)
-#looking at the the effect of latitude on the model residuals
-gam_velxGDxedge1 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
-    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (1 | Class)")
-
-#computing weights
-mydatatogo2=mydatatogo
-mydatatogoCE=subset(mydatatogo2,Param=="O")
-x1=data.frame(table(mydatatogoCE$spp))
-x1=subset(x1,Freq>0)
-x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoCE=merge(mydatatogoCE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-
-mydatatogoLE=subset(mydatatogo2,Param=="LE")
-x1=data.frame(table(mydatatogoLE$spp))
-x1=subset(x1,Freq>0)
-x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoLE=merge(mydatatogoLE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-
-mydatatogoTE=subset(mydatatogo2,Param=="TE")
-x1=data.frame(table(mydatatogoTE$spp))
-x1=subset(x1,Freq>0)
-x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoTE=merge(mydatatogoTE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
-
-mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
-mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
-mydatatogoLE$weight_obs_spp=mydatatogoLE$weight_obs_spp*(1/3)
-mydatatogo2=rbind(mydatatogoTE,mydatatogoCE,mydatatogoLE)
-
-#fitting the model
-##is latitude explaining residuals of the model? YES, not strongly but yes
-gamX1 <- glmmTMB(gam_velxGDxedge1, 
-                 family = Gamma(link = "log"),
-                 weights = weight_obs_spp,
-                 REML=F,
-                 data = mydatatogo2)
-summary(gamX1)
-r2(gamX1) #37.9%
-
-p1=predict(gamX1,mydatatogo2,re.form=~0)
-plot(p1~log(mydatatogo2$SHIFT_abs))
-resid=log(mydatatogo2$SHIFT_abs)-p1
-hist(resid)
-m1=lmer(resid~Lat+(1|Class),data=mydatatogo2,weights=weight_obs_spp)
-r2(m1)
-summary(m1) #significant but low effect on residuals: residuals increase with residuals. In the present case it means that error tends to decrease with latitude
-plot(resid~Lat,data=mydatatogo2)
-abline(a=-1.125e+00,b=6.441e-03,col=2)
-resid0=resid
-
-coeff=data.frame(summary(gamX1)$coeff$cond,
-                 var=row.names(summary(gamX1)$coeff$cond))
-coeff=coeff[,c(1,ncol(coeff))]
-names(coeff)[1]="missLat"
-
-##is climate velocity and genetic diversity explaining residuals of a model accounting for methods and latitude? YES
-#meaning that climate velocity and genetic diversity drive a significant part of the determinism of the species range shifts, that is not confounded with the latitudinal gradient
-form1 <- as.formula(
-    "SHIFT_abs ~ scale(Lat) + 
-    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (1 | Class)")
-gamX2 <- glmmTMB(form1, 
-                 family = Gamma(link = "log"),
-                 weights = weight_obs_spp,
-                 REML=F,
-                 data = mydatatogo2)
-summary(gamX2) #low but positive effect of latitude 
-r2(gamX2) #22.1%
-
-p1=predict(gamX2,mydatatogo2,re.form=~0)
-plot(p1~log(mydatatogo2$SHIFT_abs))
-resid=log(mydatatogo2$SHIFT_abs)-p1
-hist(resid)
-m1=lmer(resid~scale(vel_abs) * scale(GD) * Param +(1|Class),data=mydatatogo2,weights=weight_obs_spp,REML=F)
-summary(m1) #GD, vel_abs and Param are significants
-r2(m1) #6.5% des résidus
-plot(resid~vel_abs,data=mydatatogo2)
-plot(resid~GD,data=mydatatogo2)
-
-coeff2=data.frame(resid=summary(m1)$coeff[,1],var=row.names(summary(m1)$coeff))
-coeff=merge(coeff,coeff2)
-plot(missLat~resid,data=coeff)
-lm1=lm(missLat~resid,data=coeff)
-summary(lm1)
-
-plot(resid0~resid)
-p3=predict(m1,mydatatogo2,re.form=~0)
-plot(resid0~p3)
-resid2=resid-p3
-plot(resid0~resid2)
-
-##is methods and latitude in association with climate velocity and genetic diversity explaining species range shift? YES
-#meaning that climate velocity and genetic diversity drive a significant part of the determinism of the species range shifts, that is not confounded with the latitudinal gradient
-form2 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + scale(Lat)+
-    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (1 | Class)")
-gamX3 <- glmmTMB(form2, 
-                 family = Gamma(link = "log"),
-                 weights = weight_obs_spp,
-                 REML=F,
-                 data = mydatatogo2)
-summary(gamX3) #latitude has a positive effect
-r2(gamX3) #37.9% => not better than the model without Latitude
-
-coeff2=data.frame(summary(gamX3)$coeff$cond,
-                 var=row.names(summary(gamX3)$coeff$cond))
-coeff2=coeff2[,c(1,ncol(coeff2))]
-names(coeff2)[1]="allA"
-coeff=merge(coeff,coeff2)
-plot(missLat~allA,data=coeff)
-lm1=lm(missLat~allA,data=coeff)
-summary(lm1)
-
-form3 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param * scale(Lat)+
-    LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (1 | Class)")
-gamX4 <- glmmTMB(form3, 
-                 family = Gamma(link = "log"),
-                 weights = weight_obs_spp,
-                 REML=F,
-                 data = mydatatogo2,
-                 na.action = "na.fail")
-summary(gamX4) #latitude has a positive effect
-r2(gamX4)#38% => not better than the model without Latitude
-
-coeff2=data.frame(summary(gamX4)$coeff$cond,
-                  var=row.names(summary(gamX4)$coeff$cond))
-coeff2=coeff2[,c(1,ncol(coeff2))]
-names(coeff2)[1]="allI"
-coeff=merge(coeff,coeff2)
-plot(missLat~allI,data=coeff)
-lm1=lm(missLat~allI,data=coeff)
-summary(lm1)
-
-AIC(gamX1,gamX3,gamX4)
-
-#what happens if we conducte a model selection based on AIC?
-nCPU=15
-#setting a local cluster
-my.cluster2 <- parallel::makeCluster(
-    nCPU, 
-    type = "PSOCK"
-)
-clusterExport(cl = my.cluster2, varlist = c("gamX4","pdredge","glmmTMB","mydatatogo2"))
-
-mX=dredge(gamX4,cluster=my.cluster2)
-parallel::stopCluster(cl = my.cluster2)
-mX1=subset(mX,delta<4)
-
-#correlation among covariates
-form4 <- as.formula(
-    "Lat ~ scale(vel_abs) * scale(GD) * Param + 
-    (1 | Class)")
-gamX5 <- glmmTMB(form4, 
-                 family = Gamma(link = "log"),
-                 weights = weight_obs_spp,
-                 REML=F,
-                 data = mydatatogo2)
-summary(gamX5) #low but positive effect of latitude 
-r2(gamX5) #9.7%
-
-
