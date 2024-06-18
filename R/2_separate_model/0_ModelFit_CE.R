@@ -337,7 +337,7 @@ parallel::stopCluster(cl = my.cluster2)
 
 ex <- do.call("rbind",ex)
 
-summary statistics
+#summary statistics
 resCE=data.frame(vel_abs=names(tapply(ex$GDeff_CE,ex$vel_abs,mean)),
                  moy=tapply(ex$GDeff_CE,ex$vel_abs,mean),
                  sd=tapply(ex$GDeff_CE,ex$vel_abs,sd),
