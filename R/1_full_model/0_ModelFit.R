@@ -1,3 +1,5 @@
+gc();rm(list=ls())
+
 ################################################################################
 #required packages
 list.of.packages <- c(
@@ -11,14 +13,19 @@ new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"
 if(length(new.packages)) install.packages(new.packages)
 
 sapply(list.of.packages, require, character.only = TRUE)
+
 ################################################################################
 #define the data repository
-dir.in="/home/rbertrand/W/Bioshift/GD_study/data_Brunno_v02022024/" #to change accordingly to the location of the data
-dir.out="/home/rbertrand/W/Bioshift/GD_study/boot_analysis/REMLF2" #to change. It's the repository where the results are saved
+if(!dir.exists(here("Output/full_model"))){
+    dir.create(here("Output/full_model"),recursive = TRUE)
+}
+
+dir.in=here("Data") #to change accordingly to the location of the data
+dir.out=here("Output/full_model") #to change. It's the repository where the results are saved
 
 # Load data
-setwd(dir.in)
-mydataset <- read.csv2("gen_data_final_fonseca.csv",sep=",",dec=".",h=T) #file path in GitHub: /adaptive-potential/Data
+mydataset <- read.csv2(here(dir.in,"gen_data_final_fonseca2.csv"),
+                       sep=",",dec=".",h=T) #file path in GitHub: /adaptive
 
 #Data selection
 ## Latitude data
@@ -83,18 +90,11 @@ mydatatogo <- mydataset  %>%
         Lat_band,
         DUR, Nperiodes, LogNtempUnits, NtempUnits, Extent, LogExtent, ContinuousGrain, Quality, PrAb, ExtentF, NtempUnitsF,
         Param, Group, spp, Class, Order, Family, Genus, 
-        ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Article_ID,
-        # whereas GD data overlaps with the range shift's study area
-        overlap_SA,
-        # Distance from GD data to Bioshifts SA
-        dist_cent, # distance to the centroid of the SA
-        dist_N, # distance to the North edge of the SA (equivalent to the distance to the LE at the North hemisphere)
-        dist_S, # distance to the South edge of the SA (equivalent to the distance to the TE at the North hemisphere)
-        dist_edge # distance to the closest edge of the SA
+        ECO, Uncertainty_Parameter, Uncertainty_Distribution, Grain_size, Data, Article_ID
     ) 
 
 # transform continuous variables
-cont_vars <- c(1:14,18, 20:26, 44:47)
+cont_vars <- c(1:14,18, 20:26)
 
 mydatatogo[,cont_vars] <- lapply(mydatatogo[,cont_vars], as.numeric)
 mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
@@ -109,15 +109,15 @@ n_sps = 10
 
 test <- mydatatogo %>%
     group_by(Class,Param) %>%
-    dplyr::summarise(N_spp = length(unique(spp))) %>% # how many species per parameter?
+    summarise(N_spp = length(unique(spp))) %>% # how many species per parameter?
     dplyr::filter(N_spp >= n_sps) # select classes with > n_sps per param
 
 test <- mutate(test, Class_Param = paste(Class, Param))
 
 mydatatogo <- mydatatogo %>%
     mutate(Class_Param = paste(Class, Param)) %>%
-    filter(Class_Param %in% test$Class_Param) %>%
-    select(-Class_Param)
+    dplyr::filter(Class_Param %in% test$Class_Param) %>%
+    dplyr::select(-Class_Param)
 
 mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x, levels = unique(x)))
 
@@ -134,10 +134,10 @@ mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O")
 gam_velxGDxedge1 <- as.formula(
     "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (1 | Class)")
+    (Param|Class)")
 s1=69 #the initial random seed
 nB=12000 #the number of bootstraps
-nCPU=15
+nCPU=60
 
 #setting a local cluster
 my.cluster2 <- parallel::makeCluster(
@@ -150,6 +150,7 @@ clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo","ga
 doParallel::registerDoParallel(cl = my.cluster2)
 
 ex=pblapply(1:nB, function(i) {
+    
     gc(reset=T)
     print(i)
     set.seed(s1+i)
@@ -160,19 +161,19 @@ ex=pblapply(1:nB, function(i) {
     x1=data.frame(table(mydatatogoCE$spp))
     x1=subset(x1,Freq>0)
     x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoCE=merge(mydatatogoCE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    mydatatogoCE=merge(mydatatogoCE,x1[,c(1,3)],by.x="spp",by.y="Var1")
     
     mydatatogoLE=subset(mydatatogo2,Param=="LE")
     x1=data.frame(table(mydatatogoLE$spp))
     x1=subset(x1,Freq>0)
     x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoLE=merge(mydatatogoLE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    mydatatogoLE=merge(mydatatogoLE,x1[,c(1,3)],by.x="spp",by.y="Var1")
     
     mydatatogoTE=subset(mydatatogo2,Param=="TE")
     x1=data.frame(table(mydatatogoTE$spp))
     x1=subset(x1,Freq>0)
     x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-    mydatatogoTE=merge(mydatatogoTE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+    mydatatogoTE=merge(mydatatogoTE,x1[,c(1,3)],by.x="spp",by.y="Var1")
     
     mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
     mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
@@ -185,7 +186,7 @@ ex=pblapply(1:nB, function(i) {
                      weights = weight_obs_spp,
                      REML=F,
                      data = mydatatogo2)
-
+    
     r2=round(MuMIn::r.squaredGLMM(gamX1),2)
     r2=data.frame(r2m=r2[1,1],
                   r2c=r2[1,2],
@@ -214,14 +215,14 @@ randEff=rlist::list.rbind(lapply(ex,"[[",3))
 coeff=rlist::list.rbind(lapply(ex,"[[",2))
 r2=rlist::list.rbind(lapply(ex,"[[",1))
 
-setwd(dir.out)
 write.table(r2,
-            paste0("R2_",nom,".csv"),
+            here(dir.out,paste0("R2_",nom,".csv")),
             sep=";",dec=".",row=F)
 write.table(coeff,
-            paste0("coeff_",nom,".csv"),
+            here(dir.out,paste0("coeff_",nom,".csv")),
             sep=";",dec=".",row=F)
-write.table(randEff,paste0("randEff_",nom,".csv"),
+write.table(randEff,
+            here(dir.out,paste0("randEff_",nom,".csv")),
             sep=";",dec=".",row=F)
 
 #analysis of raw bootstrap output
@@ -281,11 +282,11 @@ for(i in 1:length(mod)){
 }
 
 write.table(r2a,
-            paste0("R2_",nom,"_sel10000.csv"),
+            here(dir.out,paste0("R2_",nom,"_sel10000.csv")),
             sep=";",dec=".",row=F) #10000 selected bootstrapped models
 
 write.table(resR2_ok,
-            "summary_R2.csv",
+            here(dir.out,paste0("summary_R2.csv")),
             sep=";",dec=".",row=F) 
 
 #R2 statistic computed from 5000 boostrap model:
@@ -299,7 +300,7 @@ write.table(resR2_ok,
 #model= model name abbreviation
 
 write.table(res_ok,
-            "summary_coeff.csv",
+            here(dir.out,"summary_coeff.csv"),
             sep=";",dec=".",row=F) 
 #coefficient statistics
 #Var =  Term of the model
@@ -325,7 +326,7 @@ subset(res_ok,model=="allW" & pv.inf0>=0.05 & pv.sup0>=0.05)
 ### Test climate velocity value for which GD is significant
 #### allW2 model
 nB=r2a$nB
-c1=read.csv2("coeff_allW.csv",
+c1=read.csv2(here(dir.out,"coeff_allW.csv"),
              sep=";",dec=".",h=T)
 dsel=mydatatogo
 v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
@@ -388,13 +389,13 @@ resTE=data.frame(vel_abs=names(tapply(ex$GDeff_TE,ex$vel_abs,mean)),
 
 
 write.table(resTE,
-            "summary_GDeff_allW_TE.csv",
+            here(dir.out,"summary_GDeff_allW_TE.csv"),
             sep=";",dec=".",row=F) 
 write.table(resCE,
-            "summary_GDeff_allW_CE.csv",
+            here(dir.out,"summary_GDeff_allW_CE.csv"),
             sep=";",dec=".",row=F) 
 write.table(resLE,
-            "summary_GDeff_allW_LE.csv",
+            here(dir.out,"summary_GDeff_allW_LE.csv"),
             sep=";",dec=".",row=F) 
 
 # #significant positive effect
@@ -421,7 +422,8 @@ subset(resTE,pv.inf0<0.05)
 subset(resTE,pv.inf0>=0.05 & pv.sup0>=0.05)
 
 ### Test GD value for which the climate velocity effect is significant
-c1=read.csv2("coeff_allW.csv",sep=";",dec=".",h=T)
+c1=read.csv2(here(dir.out,"coeff_allW.csv"),
+             sep=";",dec=".",h=T)
 dsel=mydatatogo
 v1=seq(round(min(dsel$GD),3),round(max(dsel$GD),3),by=0.001)
 
@@ -479,13 +481,13 @@ resTE=data.frame(GD=names(tapply(ex$VAeff_TE,ex$GD,mean)),
                  pv.sup0=tapply(ex$VAeff_TE,ex$GD,test1,mu=0))
 
 write.table(resTE,
-            "summary_VAeff_allW_TE.csv",
+            here(dir.out,"summary_VAeff_allW_TE.csv"),
             sep=";",dec=".",row=F) 
 write.table(resLE,
-            "summary_VAeff_allW_LE.csv",
+            here(dir.out,"summary_VAeff_allW_LE.csv"),
             sep=";",dec=".",row=F) 
 write.table(resCE,
-            "summary_VAeff_allW_CE.csv",
+            here(dir.out,"summary_VAeff_allW_CE.csv"),
             sep=";",dec=".",row=F) 
 
 # #significant positive effect
@@ -530,19 +532,19 @@ mydatatogoCE=subset(mydatatogo2,Param=="O")
 x1=data.frame(table(mydatatogoCE$spp))
 x1=subset(x1,Freq>0)
 x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoCE=merge(mydatatogoCE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+mydatatogoCE=merge(mydatatogoCE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
 mydatatogoLE=subset(mydatatogo2,Param=="LE")
 x1=data.frame(table(mydatatogoLE$spp))
 x1=subset(x1,Freq>0)
 x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoLE=merge(mydatatogoLE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+mydatatogoLE=merge(mydatatogoLE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
 mydatatogoTE=subset(mydatatogo2,Param=="TE")
 x1=data.frame(table(mydatatogoTE$spp))
 x1=subset(x1,Freq>0)
 x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
-mydatatogoTE=merge(mydatatogoTE[,1:47],x1[,c(1,3)],by.x="spp",by.y="Var1")
+mydatatogoTE=merge(mydatatogoTE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
 mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
 mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
@@ -557,17 +559,27 @@ gamX1 <- glmmTMB(gam_velxGDxedge1,
                  REML=F,
                  data = mydatatogo2)
 summary(gamX1)
-r2(gamX1) #37.9%
+MuMIn::r.squaredGLMM(gamX1)[1,] #37.9%
+
 
 p1=predict(gamX1,mydatatogo2,re.form=~0)
 plot(p1~log(mydatatogo2$SHIFT_abs))
 resid=log(mydatatogo2$SHIFT_abs)-p1
 hist(resid)
 m1=lmer(resid~Lat+(1|Class),data=mydatatogo2,weights=weight_obs_spp)
-r2(m1)
+MuMIn::r.squaredGLMM(m1)[1,] #0.6%
 summary(m1) #significant but low effect on residuals: residuals increase with residuals. In the present case it means that error tends to decrease with latitude
-plot(resid~Lat,data=mydatatogo2)
+
+par(mai=c(1,2,1,1))
+plot(resid~Lat,data=mydatatogo2,
+     xlab = "Latitude",
+     ylab = "Residuals",
+     main = "Model: Genetic diversity + Climate change velocity")
 abline(a=-1.125e+00,b=6.441e-03,col=2)
+text(2, -8, 
+     "Coeff = 6.44e-03\nP-value = < 0.001\nR2 = 0.6",
+     cex = .8, adj = c(0, 1))
+
 resid0=resid
 
 coeff=data.frame(summary(gamX1)$coeff$cond,
@@ -587,7 +599,7 @@ gamX2 <- glmmTMB(form1,
                  REML=F,
                  data = mydatatogo2)
 summary(gamX2) #low but positive effect of latitude 
-r2(gamX2) #22.1%
+MuMIn::r.squaredGLMM(gamX2)[1,] #22.1%
 
 p1=predict(gamX2,mydatatogo2,re.form=~0)
 plot(p1~log(mydatatogo2$SHIFT_abs))
@@ -595,7 +607,7 @@ resid=log(mydatatogo2$SHIFT_abs)-p1
 hist(resid)
 m1=lmer(resid~scale(vel_abs) * scale(GD) * Param +(1|Class),data=mydatatogo2,weights=weight_obs_spp,REML=F)
 summary(m1) #GD, vel_abs and Param are significants
-r2(m1) #6.5% des résidus
+MuMIn::r.squaredGLMM(m1)[1,]  #6.5% des résidus
 plot(resid~vel_abs,data=mydatatogo2)
 plot(resid~GD,data=mydatatogo2)
 
@@ -623,7 +635,7 @@ gamX3 <- glmmTMB(form2,
                  REML=F,
                  data = mydatatogo2)
 summary(gamX3) #latitude has a positive effect
-r2(gamX3) #37.9% => not better than the model without Latitude
+MuMIn::r.squaredGLMM(gamX3)[1,]  #37.9% => not better than the model without Latitude (gamX1 above)
 
 coeff2=data.frame(summary(gamX3)$coeff$cond,
                  var=row.names(summary(gamX3)$coeff$cond))
@@ -632,7 +644,8 @@ names(coeff2)[1]="allA"
 coeff=merge(coeff,coeff2)
 plot(missLat~allA,data=coeff)
 lm1=lm(missLat~allA,data=coeff)
-summary(lm1)
+summary(lm1) ##coefficeient with and without considering lat are the same which is good and demonstrate that the effect of GD, climate change velocity and position are not dependent on Latitude
+
 
 form3 <- as.formula(
     "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param * scale(Lat)+
@@ -645,7 +658,7 @@ gamX4 <- glmmTMB(form3,
                  data = mydatatogo2,
                  na.action = "na.fail")
 summary(gamX4) #latitude has a positive effect
-r2(gamX4)#38% => not better than the model without Latitude
+MuMIn::r.squaredGLMM(gamX4)[1,] #38%  => not better than the model without Latitude
 
 coeff2=data.frame(summary(gamX4)$coeff$cond,
                   var=row.names(summary(gamX4)$coeff$cond))
@@ -654,11 +667,18 @@ names(coeff2)[1]="allI"
 coeff=merge(coeff,coeff2)
 plot(missLat~allI,data=coeff)
 lm1=lm(missLat~allI,data=coeff)
-summary(lm1)
+summary(lm1) #coefficeient with and without considering lat are the same which is good and demonstrate that the effect of GD, climate change velocity and position are not dependent on Latitude
 
-AIC(gamX1,gamX3,gamX4)
-
+AIC(gamX1,gamX2,gamX3,gamX4) 
+# df      AIC
+# gamX1 20 43.41449
+# gamX2 10 23.57997
+# gamX3 21 45.41115
+# gamX4 32 67.40478
+#Lower AIC observed when latitudes is not considered in the model
 #what happens if we conducte a model selection based on AIC?
+
+#AIC selection from the full model (not sure we need to keep this analysis)
 nCPU=15
 #setting a local cluster
 my.cluster2 <- parallel::makeCluster(
@@ -681,6 +701,6 @@ gamX5 <- glmmTMB(form4,
                  REML=F,
                  data = mydatatogo2)
 summary(gamX5) #low but positive effect of latitude 
-r2(gamX5) #9.7%
+MuMIn::r.squaredGLMM(gamX5)[1,]  #9.7% of shared variance
 
 
