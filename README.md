@@ -4,7 +4,7 @@ This repository contains code and data for the study: **"Genetic diversity impac
 
 In this study, we test whether species\' genetic diversity---used here as a proxy for adaptive potential---helps explain interspecific variation in the rates at which species are shifting their geographic ranges in response to climate change.
 
-## 🔍 Background
+## Background
 
 Anthropogenic climate change is reshaping biodiversity globally, driving species to **either persist in place** (through adaptation or plasticity) or **move in space** (by tracking suitable climates). Species range shifts---especially towards higher latitudes and elevations---have been extensively documented as key responses to climate warming. However, less is known about the **role of evolutionary potential** in shaping these shifts.
 
@@ -16,7 +16,7 @@ Genetic diversity is expected to **enhance adaptive capacity**, influencing both
 
 While many adaptation studies rely on genomic approaches applied to model species, recent advances in **macrogenetics** enable broader-scale tests of evolutionary hypotheses using large genetic datasets (e.g., Fonseca et al. 2023).
 
-## 🎯 Research Questions
+## Research Questions
 
 We ask:
 
@@ -26,7 +26,7 @@ We ask:
 
 3.  Does this relationship vary depending on the **position in the range** (leading edge, centroid, trailing edge)?
 
-## 📦 Data Sources
+## Data Sources
 
 We integrated two global datasets:
 
@@ -68,9 +68,3 @@ Key packages:
 
 See the `scripts/` folder for analysis pipelines and the `data/` folder for preprocessed datasets.
 
-## 📍 Citation
-
-If you use this code or data in your work, please cite:
-
-Fonseca et al. (2023). *Evolution Letters*, 7(5), 331--345. \
-Comte et al. (2020). BioShifts dataset. [Figshare](https://doi.org/10.6084/m9.figshare.7413365.v1)
