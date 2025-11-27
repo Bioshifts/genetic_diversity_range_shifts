@@ -4,8 +4,10 @@ gc();rm(list=ls())
 #required packages
 list.of.packages <- c(
     "doParallel", "parallel","foreach","pdftools","plotly",
-    "pbapply","dplyr", "tidyr", "parallel",
-    "scales","effects","psych", "glmmTMB", "lme4", "lmerTest","here","rlist","ggtext","gridExtra","grid","lattice","viridis","performance","MuMIn") 
+    "pbapply","dplyr", "tidyr", "data.table",
+    "scales","effects","psych", 
+    "glmmTMB", "lme4", "lmerTest","here","rlist",
+    "ggtext","gridExtra","grid","lattice","viridis","performance","MuMIn") 
 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -125,6 +127,49 @@ mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x,
 # Set the reference param level to the centroid of species obs
 mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
 
+# Taxonomy data
+taxatable <- mydatatogo %>%
+    group_by(Class, Order, Family) %>%
+    summarise(Species = length(unique(spp)),
+              Shift = n())
+
+write.csv(taxatable,
+          here("Output/taxa_table.csv"),
+          row.names = FALSE)
+
+################################################################################
+##############################Test if GD is adaptive############################
+################################################################################
+
+# plug in codon position
+Fonseca <- fread(here::here("Data/Fonseca_etal_2023_EvoLetters.txt"))
+
+all.equal(Fonseca$mut_1_bp, Fonseca$mut_2_bp)
+all.equal(Fonseca$mut_1_bp, Fonseca$mut_3_bp)
+summary(Fonseca[, .(mut_1_bp, mut_2_bp, mut_3_bp)])
+
+Fonseca <- Fonseca %>% 
+    select(spp_new,
+           mut_1_bp, mut_2_bp, mut_3_bp)
+
+mydatatogo <- merge(mydatatogo,
+                    Fonseca,
+                    by.x = "spp",
+                    by.y = "spp_new")
+
+mydatatogo$piN  <- (mydatatogo$mut_1_bp + mydatatogo$mut_2_bp) / 2
+mydatatogo$piS <- mydatatogo$mut_3_bp
+mydatatogo$piN_piS <- mydatatogo$piN / mydatatogo$piS
+
+hist(mydatatogo$piN_piS)
+
+all.equal(mydatatogo$mut_1_bp, mydatatogo$mut_2_bp)
+
+cor.test(mydatatogo$GD, mydatatogo$mut_1_bp)
+cor.test(mydatatogo$GD, mydatatogo$mut_2_bp)
+cor.test(mydatatogo$GD, mydatatogo$mut_3_bp)
+
+table(mydatatogo$Class)
 ################################################################################
 ###############Fit a single model with Param*GD*climate velocity################
 ################################################################################
