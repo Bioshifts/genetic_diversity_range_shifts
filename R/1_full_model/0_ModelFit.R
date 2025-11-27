@@ -27,7 +27,7 @@ dir.out=here("Output/full_model") #to change. It's the repository where the resu
 
 # Load data
 mydataset <- read.csv2(here(dir.in,"gen_data_final_fonseca2.csv"),
-                       sep=",",dec=".",h=T) #file path in GitHub: /adaptive
+                       sep=",",dec=".",h=T) 
 
 #Data selection
 ## Latitude data

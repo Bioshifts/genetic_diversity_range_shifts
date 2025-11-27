@@ -124,141 +124,61 @@ mydatatogo[,-cont_vars] <- lapply(mydatatogo[,-cont_vars], function(x) factor(x,
 mydatatogo$Param <- relevel(mydatatogo$Param, ref = "O") 
 
 
-############################Figure S1###########################################
+############################Figure S2###########################################
 
-params <- c("ParamTE","ParamCE","ParamLE")
-params2 <- c("TE","O","LE")
-params3 <- c(":ParamTE","",":ParamLE")
-param4 <- c("Trailing edge", "Centroid", "Leading edge")
 
-png(paste0(dir.out,"/FigS1.png"),unit="cm",width=20,height=6.666,res=300)#,width=547,height=360
+## allW_TE
+c1=read.csv2(here(dir.in,"summary_coeff.csv"),
+             sep=";",dec=".",h=T)
+c1a=subset(c1,model=="allW")
 
-par(mfrow = c(1,3)) 
+int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var=="ParamTE"]
 
-for(j in 1:length(unique(params))){
-    
-    c1=read.csv2(here(dir.in,"summary_coeff.csv"),
-                 sep=";",dec=".",h=T)
-    c1a=subset(c1,model=="allW")
-    
-    if(params2[j] == "O"){
-        int=c1a$median[c1a$var=="(Intercept)"]
-    } else {
-        int=c1a$median[c1a$var=="(Intercept)"]+c1a$median[c1a$var==params[j]]
+dsel=subset(mydatatogo,Param=="TE")
+
+dsel$GD2=round(dsel$GD,4)
+dsel$vel_abs2=round(dsel$vel_abs,1)
+#kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
+kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
+
+v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
+v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))  
+for(i in 1:length(kd$y)){
+    pred1=exp(int+(c1a$median[c1a$var=="scale(GD)"]+c1a$median[c1a$var=="scale(GD):ParamTE"])*((kd$x-mean(mydatatogo$GD))/sd(mydatatogo$GD))+
+                  (c1a$median[c1a$var=="scale(vel_abs)"]+c1a$median[c1a$var=="scale(vel_abs):ParamTE"])*((kd$y[i]-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+
+                  (c1a$median[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$median[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((kd$y[i]-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))*((kd$x-mean(mydatatogo$GD))/sd(mydatatogo$GD))+
+                  c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
+    pred1=data.frame(GD=kd$x,pred1,
+                     vel_abs=kd$y[i],freq=kd$z[,i])
+    if(i==1){
+        pred2=pred1
+    }else{
+        pred2=rbind(pred2,pred1)
     }
-    
-    dsel=subset(mydatatogo,Param==params2[j])
-    
-    dsel$GD2=round(dsel$GD,4)
-    dsel$vel_abs2=round(dsel$vel_abs,1)
-    kd <- with(dsel, 
-               MASS::kde2d(GD2,vel_abs2, 
-                           n = 50,
-                           lims=c(round(range(mydatatogo$GD),4),
-                                  round(range(mydatatogo$vel_abs),1))))
-    
-    
-    v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
-    v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))  
-    for(i in 1:length(kd$y)){
-        pred1=exp(int+(c1a$median[c1a$var=="scale(GD)"]+c1a$median[c1a$var==paste0("scale(GD)",params3[j])])*((kd$x-mean(mydatatogo$GD))/sd(mydatatogo$GD))+
-                      (c1a$median[c1a$var=="scale(vel_abs)"]+c1a$median[c1a$var==paste0("scale(vel_abs)",params3[j])])*((kd$y[i]-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))+
-                      (c1a$median[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$median[c1a$var==paste0("scale(vel_abs):scale(GD)",params3[j])])*((kd$y[i]-mean(mydatatogo$vel_abs))/sd(mydatatogo$vel_abs))*((kd$x-mean(mydatatogo$GD))/sd(mydatatogo$GD))+
-                      c1a$median[c1a$var=="LogExtent"]*mean(mydatatogo$LogExtent)+c1a$median[c1a$var=="LogNtempUnits"]*mean(mydatatogo$LogNtempUnits)+c1a$median[c1a$var=="ContinuousGrain"]*2) 
-        pred1=data.frame(GD=kd$x,pred1,
-                         vel_abs=kd$y[i],freq=kd$z[,i])
-        if(i==1){
-            pred2=pred1
-        }else{
-            pred2=rbind(pred2,pred1)
-        }
-    }
-    
-    
-    pred2=pred2[order(pred2$vel_abs),]
-    pred2=pred2[order(pred2$GD),]
-    z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
-    jet.colors2 <- colorRampPalette( c("red","orange","yellow","green") ) 
-    pal2 <- jet.colors2(100)
-    z=z1
-    z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
-    col.ind2 <- cut(z.facet.center, 100)
-    col.ind2[z.facet.center<0.01]="#FFFFFF"
-    s1=1:round(max(z.facet.center),0)
-    col.ind3 <- cut(s1, 100)
-    
-    par(mar=c(0,2,2,4),
-        mgp = c(8, 10, 0))
-    
-    with(pred2,
-         persp(x=sort(unique(GD)),
-               y=sort(unique(vel_abs)),
-               z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
-               col=pal2[col.ind2],
-               main = param4[j],
-               ticktype = "detailed", phi=30, theta=-40,border="grey80",lwd=0.2,
-               xlab='\n\nGenetic diversity',
-               ylab='\n\nClimate change velocity',
-               zlab='\n\nPredicted\nrange shift velocity',
-               cex.lab=0.75,
-               cex.axis=0.75))
-    
-    r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-    rX2=r1
-    rX2[]=sample(1:100,size=ncell(r1),rep=T)
-    
-    plot(rX2, horizontal=F, legend.only=TRUE, col=pal2,
-         smallplot=c(.85, .87, .4, .8), maxpixels=2000000,
-         axis.args=list(tck=-0.5,
-                        at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20))]),
-                        labels=F),
-         legend.args=list(text="Density of observations", 
-                          side=4,font=2, 
-                          line=1.2, 
-                          cex=0.65))
-    
-    if(params2[j] == "TE"){
-        plot(rX2, horizontal=F, legend.only=TRUE, col=pal2,
-             smallplot=c(.85, .87, .4, .8),maxpixels=2000000,
-             axis.args=list(tck=F,
-                            lwd=0,
-                            line=-0.50,
-                            at=as.numeric(col.ind3[s1%in%c(1,seq(20,100,by=20))]),
-                            labels=c(1,seq(20,100,by=20)),
-                            cex.axis=0.5))
-    }
-    if(params2[j] == "O"){
-        plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,
-             smallplot=c(.85, .87, .4, .8),maxpixels=2000000,
-             axis.args=list(tck=F,
-                            lwd=0,
-                            line=-0.50,
-                            at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),
-                            labels=c(1,seq(20,60,by=20),max(s1)),
-                            cex.axis=0.5))
-    }
-    if(params2[j] == "LE"){
-        plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,
-             smallplot=c(.85, .87, .4, .8),maxpixels=2000000,
-             axis.args=list(tck=F,
-                            lwd=0,
-                            line=-0.50,
-                            at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),
-                            labels=c(1,seq(25,175,by=25),max(s1)),
-                            cex.axis=0.5))
-    }
-    
 }
 
+kd_te=kd
 
-
-dev.off()
+pred2=pred2[order(pred2$vel_abs),]
+pred2=pred2[order(pred2$GD),]
+z1=matrix(pred2$freq,ncol=length(unique(pred2$GD)),byrow=T)
+jet.colors2 <- colorRampPalette( c("red","orange","yellow","green") ) 
+pal2 <- jet.colors2(100)
+#col.ind2 <- col.ind
+#col.ind2 <- pal2[col.ind]
+#col.ind2[z1<0.5]="#FFFFFF"
+z=z1
+z.facet.center <- (z[-1, -1] + z[-1, -ncol(z)] + z[-nrow(z), -1] + z[-nrow(z), -ncol(z)])/4
+col.ind2 <- cut(z.facet.center, 100)
+col.ind2[z.facet.center<0.1]="#FFFFFF"
+s1=1:round(max(z.facet.center),0)
+col.ind3 <- cut(s1, 100)
 
 
 #######################a 2d plot reresenting predictions of the model
 #TE
 r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
+
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "pred1")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
@@ -325,13 +245,6 @@ dsel$vel_abs2=round(dsel$vel_abs,1)
 kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
 
 
-#3D plots of the 2D kernel (we see where obs. are)
-fig <- plot_ly(x = kd$x, y = kd$y, z = kd$z) %>% add_surface()
-fig
-
-plot(kd$z)
-
-
 v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
 v2=seq(round(min(dsel$GD),4),round(max(dsel$GD),4),length.out=nrow(mydatatogo))  
 for(i in 1:length(kd$y)){
@@ -348,23 +261,6 @@ for(i in 1:length(kd$y)){
     }
 }
 
-#3D plots with enveloppe and colored with agradient of the number of obs available
-# Response surface (with grid on axes)
-x <- plot_ly(pred2, x = ~GD, y = ~vel_abs, z = ~pred1,
-             intensity=~freq,
-             type='mesh3d',
-             colorscale = list(c(0,'white'),
-                               c(0.1,'red'),
-                               c(0.25, 'orange'),
-                               c(0.5,'yellow'),
-                               c(1, 'green')),
-             colorbar=list(title = "N"))
-
-x_ce <- x %>% layout(scene = list(xaxis = list(title = 'Genetic diversity', showgrid = TRUE, gridcolor = "black"),
-                                  yaxis = list(title = 'Absolute climate change velocity', showgrid = TRUE, gridcolor = "black"),
-                                  zaxis = list(title = 'Predicted absolute species range shift', showgrid = TRUE, gridcolor = "black"),
-                                  colorbar = list(title = "N")))
-x_ce  
 
 kd_ce=kd
 
@@ -384,43 +280,13 @@ col.ind2[z.facet.center<0.01]="#FFFFFF"
 s1=1:round(max(z.facet.center),0)
 col.ind3 <- cut(s1, 100)
 
-png(paste0(dir.out,"/figS1_CE_v062025.png"),unit="cm",width=11,height=11,res=300)#,width=547,height=360
-
-par(mar=c(0,2,0,4))
-with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
-                 col=pal2[col.ind2],ticktype = "detailed", phi=30, theta=-40,border="grey80",lwd=0.2,
-                 xlab="",
-                 ylab='',
-                 zlab="",
-                 cex.lab=0.75,
-                 cex.axis=0.75))
 
 r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-rX2=r1
-rX2[]=sample(1:100,size=ncell(r1),rep=T)
 
-plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=F)
-     ,legend.args=list(text="Density of observations", side=4,font=2, line=1.2, cex=0.65))
-
-plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(20,60,by=20),max(s1))]),labels=c(1,seq(20,60,by=20),max(s1)),cex.axis=0.5))
-
-dev.off()
-
-
-#######################a 2d plot reresenting predictions of the model
-#CE
-r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "pred1")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
 
-#ggplot() + 
-#geom_raster(data = r1_df, aes(x =dur, y = ratT, fill = nB)) + 
-#scale_fill_distiller(palette = "BrBG") + 
-#coord_sf(crs = 4326)
 r1_df=subset(r1_df,vel_abs<=7 & GD<=0.052)
 gg=ggplot(data = r1_df, aes(x =GD, y = vel_abs, fill = pred1))  
 gg <- gg + geom_tile(color="grey", size=0.1)
@@ -466,6 +332,7 @@ gg2
 
 
 ## allW2_LE
+
 c1=read.csv2(here(dir.in,"summary_coeff.csv"),
              sep=";",dec=".",h=T)
 c1a=subset(c1,model=="allW")
@@ -478,13 +345,6 @@ dsel$GD2=round(dsel$GD,4)
 dsel$vel_abs2=round(dsel$vel_abs,1)
 #kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50))
 kd <- with(dsel, MASS::kde2d(GD2,vel_abs2, n = 50,lims=c(round(range(mydatatogo$GD),4),round(range(mydatatogo$vel_abs),1))))
-
-
-#3D plots of the 2D kernel (we see where obs. are)
-fig <- plot_ly(x = kd$x, y = kd$y, z = kd$z) %>% add_surface()
-fig
-
-plot(kd$z)
 
 
 v1=seq(round(min(dsel$vel_abs),1),round(max(dsel$vel_abs),1),by=0.1)
@@ -503,23 +363,6 @@ for(i in 1:length(kd$y)){
     }
 }
 
-#3D plots with enveloppe and colored with agradient of the number of obs available
-# Response surface (with grid on axes)
-x <- plot_ly(pred2, x = ~GD, y = ~vel_abs, z = ~pred1,
-             intensity=~freq,
-             type='mesh3d',
-             colorscale = list(c(0,'white'),
-                               c(0.1,'red'),
-                               c(0.25, 'orange'),
-                               c(0.5,'yellow'),
-                               c(1, 'green')),
-             colorbar=list(title = "N"))
-
-x_le <- x %>% layout(scene = list(xaxis = list(title = 'Genetic diversity', showgrid = TRUE, gridcolor = "black"),
-                                  yaxis = list(title = 'Absolute climate change velocity', showgrid = TRUE, gridcolor = "black"),
-                                  zaxis = list(title = 'Predicted absolute species range shift', showgrid = TRUE, gridcolor = "black"),
-                                  colorbar = list(title = "N")))
-x_le  
 
 kd_le=kd
 
@@ -539,34 +382,10 @@ col.ind2[z.facet.center<0.1]="#FFFFFF"
 s1=1:round(max(z.facet.center),0)
 col.ind3 <- cut(s1, 100)
 
-png(paste0(dir.out,"/figS1_LE_v062025.png"),unit="cm",width=11,height=11,res=300)#,width=547,height=360
-
-par(mar=c(0,2,0,4))
-with(pred2,persp(x=sort(unique(GD)),y=sort(unique(vel_abs)),z=matrix(pred1,ncol=length(unique(GD)),byrow=T),
-                 col=pal2[col.ind2],ticktype = "detailed", phi=30, theta=-40,border="grey80",lwd=0.2,
-                 xlab="",
-                 ylab='',
-                 zlab="",
-                 cex.lab=0.75,
-                 cex.axis=0.75))
-
-r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-rX2=r1
-rX2[]=sample(1:100,size=ncell(r1),rep=T)
-
-plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=-0.5,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=F)
-     ,legend.args=list(text="Density of observations", side=4,font=2, line=1.2, cex=0.65))
-
-plot(rX2, horizontal=F, legend.only=TRUE,col=pal2,smallplot=c(.85, .87, .4, .8),maxpixels=2000000
-     ,axis.args=list(tck=F,lwd=0,line=-0.50,at=as.numeric(col.ind3[s1%in%c(1,seq(25,175,by=25),max(s1))]),labels=c(1,seq(25,175,by=25),max(s1)),cex.axis=0.5))
-
-dev.off()
-
 #######################a 2d plot reresenting predictions of the model
 #LE
 r1=rasterFromXYZ(pred2[,c("GD","vel_abs","pred1")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
+
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "pred1")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
@@ -618,6 +437,9 @@ gg <- gg + theme(legend.text=element_text(size=10))
 gg3=gg
 gg3
 
+
+# Combine plots
+
 leg <- get_legend(gg)
 gg_leg<-ggpubr::as_ggplot(leg) 
 gg_leg<-gg_leg + theme(plot.margin = margin(0, 1.5, 0, 1, "cm"))
@@ -636,7 +458,7 @@ gg3 <- gg3+ theme(legend.position = "none")+
     theme(plot.title = element_text(hjust = 0.5),
           plot.tag.position = c(0.065, 0.975))
 
-png(paste0(dir.out,"/figS2_panelABC_v062025.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
+png(paste0(dir.out,"/FigS2_panelABC_v062025.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
 #gs <- lapply(1:4, function(ii) 
 #grobTree(rectGrob(gp=gpar(fill=ii, alpha=0.5)), textGrob(ii)))
 lay <- rbind(c(1,2,3,4))
@@ -662,7 +484,7 @@ for(i in kd_te$y){
 
 
 r1=rasterFromXYZ(res2[,c("GD","vel_abs","n")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
+
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "n")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
@@ -696,8 +518,8 @@ gg <- gg + theme(legend.title=element_text(size=11,angle=-270))
 gg <- gg + theme(legend.title.align = 0.5,
                  legend.direction = "vertical")
 gg <- gg + theme(legend.text=element_text(size=10))
-gg1=gg
-gg1
+gg1_1=gg
+gg1_1
 
 
 #CE
@@ -715,7 +537,7 @@ for(i in kd$y){
 
 
 r1=rasterFromXYZ(res2[,c("GD","vel_abs","n")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
+
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "n")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
@@ -753,8 +575,8 @@ gg <- gg + theme(legend.title=element_text(size=11,angle=-270))
 gg <- gg + theme(legend.title.align = 0.5,
                  legend.direction = "vertical")
 gg <- gg + theme(legend.text=element_text(size=10))
-gg2=gg
-gg2
+gg2_2=gg
+gg2_2
 
 #LE
 a=1
@@ -771,7 +593,7 @@ for(i in kd$y){
 
 
 r1=rasterFromXYZ(res2[,c("GD","vel_abs","n")])
-plot(r1,xlim=c(0,0.3),ylim=c(0,6))
+
 
 r1_df <- as.data.frame(r1, xy = TRUE)
 r1_df <- setNames(r1_df, c("GD", "vel_abs", "n")) #c("duration (°C)", "rate of climate warming (°C/yr)", "Colonisation/Extinction balance")
@@ -809,28 +631,31 @@ gg <- gg + theme(legend.title=element_text(size=11,angle=-270))
 gg <- gg + theme(legend.title.align = 0.5,
                  legend.direction = "vertical")
 gg <- gg + theme(legend.text=element_text(size=10))
-gg3=gg
-gg3
+gg3_3=gg
+gg3_3
 
 leg <- get_legend(gg)
-gg_leg<-ggpubr::as_ggplot(leg) 
-gg_leg<-gg_leg + theme(plot.margin = margin(0, 1.5, 0, 1, "cm"))
-gg_leg
+gg_leg_1<-ggpubr::as_ggplot(leg) 
+gg_leg_1<-gg_leg_1 + theme(plot.margin = margin(0, 1.5, 0, 1, "cm"))
+gg_leg_1
 
-gg1 <- gg1+ theme(legend.position = "none")+
+gg1_1 <- gg1_1+ theme(legend.position = "none")+
     labs(tag = '(d)')+
     theme(plot.tag.position = c(0.065, 0.975))
-gg2 <- gg2+ theme(legend.position = "none")+
+gg2_2 <- gg2_2+ theme(legend.position = "none")+
     labs(tag = '(e)')+
     theme(plot.tag.position = c(0.065, 0.975))
-gg3 <- gg3+ theme(legend.position = "none")+
+gg3_3 <- gg3_3+ theme(legend.position = "none")+
     labs(tag = '(f)')+
     theme(plot.tag.position = c(0.065, 0.975))
 
-png(paste0(dir.out,"/figS2_panel DEF.png"),unit="cm",width=27,height=11,res=300)#,width=547,height=360
+png(here(dir.out,"FigS2.png"),unit="cm",width=27,height=22,res=300)#,width=547,height=360
 #gs <- lapply(1:4, function(ii) 
 #grobTree(rectGrob(gp=gpar(fill=ii, alpha=0.5)), textGrob(ii)))
 lay <- rbind(c(1,2,3,4))
 gridExtra::grid.arrange(gg1,gg2,gg3,gg_leg, 
-                        ncol=4, nrow=1, widths=c(1,1,1,0.2), heights=c(1),layout_matrix = lay)
+                        gg1_1,gg2_2,gg3_3,gg_leg_1, 
+                        ncol=4, nrow=2, 
+                        widths=c(1,1,1,0.2), 
+                        heights=c(1,1))
 dev.off()

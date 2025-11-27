@@ -17,7 +17,7 @@ dir.out=here("Figs") #to change. It's the repository where the results are saved
 
 # Load data
 mydataset <- read.csv2(here("Data","gen_data_final_fonseca2.csv"),
-                       sep=",",dec=".",h=T) #file path in GitHub: /adaptive-potential/Data
+                       sep=",",dec=".",h=T) 
 
 #Data selection
 ## Latitude data
