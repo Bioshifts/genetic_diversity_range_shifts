@@ -34,7 +34,7 @@ We integrated two global datasets:
 
 -   **Genetic diversity:** Intraspecific nucleotide diversity (π) from [Fonseca et al. 2023](https://academic.oup.com/evlett/article/7/5/331/7226644), calculated from mitochondrial and chloroplast DNA via the phylogatR platform.
 
-## 🧪 Methods Summary
+## Methods Summary
 
 To test whether genetic diversity influences the speed at which species are shifting their ranges due to climate change, we combined two global datasets:
 
