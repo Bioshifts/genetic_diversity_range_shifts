@@ -6,8 +6,8 @@ list.of.packages <- c(
     "doParallel", "parallel","foreach","pdftools","plotly",
     "pbapply","dplyr", "tidyr", "data.table",
     "scales","effects","psych", 
-    "glmmTMB", "lme4", "lmerTest","here","rlist",
-    "ggtext","gridExtra","grid","lattice","viridis","performance","MuMIn") 
+    "glmmTMB", "lme4", "lmerTest","here","rlist","partR2","VennDiagram",
+    "ggtext","gridExtra","grid","lattice","viridis","performance","MuMIn","glmm.hp") 
 
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -138,38 +138,174 @@ write.csv(taxatable,
           row.names = FALSE)
 
 ################################################################################
-##############################Test if GD is adaptive############################
+##############################Variance partitioning ############################
 ################################################################################
 
-# plug in codon position
-Fonseca <- fread(here::here("Data/Fonseca_etal_2023_EvoLetters.txt"))
 
-all.equal(Fonseca$mut_1_bp, Fonseca$mut_2_bp)
-all.equal(Fonseca$mut_1_bp, Fonseca$mut_3_bp)
-summary(Fonseca[, .(mut_1_bp, mut_2_bp, mut_3_bp)])
+mydatatogo2=mydatatogo
+mydatatogoCE=subset(mydatatogo2,Param=="O")
+x1=data.frame(table(mydatatogoCE$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoCE=merge(mydatatogoCE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
-Fonseca <- Fonseca %>% 
-    select(spp_new,
-           mut_1_bp, mut_2_bp, mut_3_bp)
+mydatatogoLE=subset(mydatatogo2,Param=="LE")
+x1=data.frame(table(mydatatogoLE$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoLE=merge(mydatatogoLE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
-mydatatogo <- merge(mydatatogo,
-                    Fonseca,
-                    by.x = "spp",
-                    by.y = "spp_new")
+mydatatogoTE=subset(mydatatogo2,Param=="TE")
+x1=data.frame(table(mydatatogoTE$spp))
+x1=subset(x1,Freq>0)
+x1$weight_obs_spp=(1/x1$Freq)*(1/nrow(x1))
+mydatatogoTE=merge(mydatatogoTE,x1[,c(1,3)],by.x="spp",by.y="Var1")
 
-mydatatogo$piN  <- (mydatatogo$mut_1_bp + mydatatogo$mut_2_bp) / 2
-mydatatogo$piS <- mydatatogo$mut_3_bp
-mydatatogo$piN_piS <- mydatatogo$piN / mydatatogo$piS
+mydatatogoTE$weight_obs_spp=mydatatogoTE$weight_obs_spp*(1/3)
+mydatatogoCE$weight_obs_spp=mydatatogoCE$weight_obs_spp*(1/3)
+mydatatogoLE$weight_obs_spp=mydatatogoLE$weight_obs_spp*(1/3)
 
-hist(mydatatogo$piN_piS)
+mydatatogo2=rbind(mydatatogoTE,mydatatogoCE,mydatatogoLE)
 
-all.equal(mydatatogo$mut_1_bp, mydatatogo$mut_2_bp)
+mydatatogo2$vel_abs_s <- scale(mydatatogo2$vel_abs)
+mydatatogo2$GD_s <- scale(mydatatogo2$GD)
 
-cor.test(mydatatogo$GD, mydatatogo$mut_1_bp)
-cor.test(mydatatogo$GD, mydatatogo$mut_2_bp)
-cor.test(mydatatogo$GD, mydatatogo$mut_3_bp)
+gam_velxGDxedge1 <- as.formula(
+    "SHIFT_abs ~ vel_abs_s + GD_s + Param +
+   vel_abs_s:GD_s + vel_abs_s:Param + GD_s:Param +
+   vel_abs_s:GD_s:Param +
+   LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality +
+   (1|Class)")
 
-table(mydatatogo$Class)
+full <- glmmTMB(gam_velxGDxedge1,
+                family = Gamma(link = 'log'),
+                weights = mydatatogo2$weight_obs_spp,
+                REML = FALSE,
+                data = mydatatogo2)
+# check_singularity(full)
+# summary(full)
+
+# Hierarchical Partitioning of Marginal R2 for GLMMs
+# Takes a while to calculate
+# full_model_hp <- glmm.hp(
+#     full,
+#     iv=list(vel="vel_abs_s",
+#             GD="GD_s",
+#             Param="Param",
+#             vel_Param="vel_abs_s:Param",
+#             GD_Param="GD_s:Param",
+#             vel_GD="vel_abs_s:GD_s",
+#             vel_GD_Param="vel_abs_s:GD_s:Param",
+#             Methods=c("LogNtempUnits", "LogExtent", "ContinuousGrain", "PrAb", "Quality")))
+# 
+# saveRDS(full_model_hp,
+#         "Data/R2part.RData")
+load("Data/R2part.RData")
+full_model_hp
+full_model_hp$r.squaredGLMM
+full_model_hp$lognormal
+
+# semi-partial R² (fixed-effects only)
+semi_partial_r2 <- function(full, drop_vars){
+    # drop_vars: character string of terms to remove
+    reduced_formula <- as.formula(
+        paste(". ~ . -", paste(drop_vars, collapse = " - "))
+    )
+    reduced <- update(full, reduced_formula)
+    r2_full <- r2(full)$R2_m
+    r2_reduced <- r2(reduced)$R2_m
+    r2_diff <- r2_full - r2_reduced
+    r2_diff <- pmax(r2_diff, 0)  # clamp negative
+    return(r2_diff)
+}
+
+
+# GD semi-partial R²
+r2_GD <- semi_partial_r2(full, c(
+    "vel_abs_s:GD_s:Param",
+    "vel_abs_s:GD_s",
+    "GD_s:Param",
+    "GD_s")
+)
+
+# Vel semi-partial R²
+r2_Vel <- semi_partial_r2(full, c(
+    "vel_abs_s:GD_s:Param",
+    "vel_abs_s:GD_s",
+    "vel_abs_s:Param",
+    "vel_abs_s")
+)
+
+# Param semi-partial R²
+r2_Param <- semi_partial_r2(full, c(
+    "vel_abs_s:GD_s:Param",
+    "vel_abs_s:Param",
+    "GD_s:Param",
+    "Param")
+)
+
+# Interactions
+r2_GD_Vel <- semi_partial_r2(full, c(
+    "vel_abs_s:GD_s",                                                                  "vel_abs_s:GD_s:Param"))
+r2_Vel_Param <- semi_partial_r2(full, c(
+    "vel_abs_s:Param",                                                                        "vel_abs_s:GD_s:Param"))
+r2_GD_Param <- semi_partial_r2(full, c(
+    "GD_s:Param",
+    "vel_abs_s:GD_s:Param"))
+r2_GD_Vel_Param <- semi_partial_r2(full, c(
+    "vel_abs_s:GD_s:Param"
+))
+
+# Covariates (methods)
+r2_methods <- semi_partial_r2(full, c(
+    "LogNtempUnits", "LogExtent", "ContinuousGrain", "PrAb", "Quality"
+))
+
+
+venn_values <- data.frame(GD = r2_GD,
+                          Vel = r2_Vel,
+                          Param = r2_Param,
+                          GD_Vel = r2_GD_Vel,
+                          Vel_Param = r2_Vel_Param,
+                          GD_Param = r2_GD_Param,
+                          GD_Vel_Param = r2_GD_Vel_Param,
+                          Methods = r2_methods)
+
+venn_values <- pmax(venn_values,0)
+
+# Clamp intersections
+venn_values_fixed <- venn_values
+venn_values_fixed["GD_Vel"] <- min(venn_values["GD_Vel"], venn_values["GD"], venn_values["Vel"])
+venn_values_fixed["GD_Param"] <- min(venn_values["GD_Param"], venn_values["GD"], venn_values["Param"])
+venn_values_fixed["Vel_Param"] <- min(venn_values["Vel_Param"], venn_values["Vel"], venn_values["Param"])
+venn_values_fixed["GD_Vel_Param"] <- min(venn_values["GD_Vel_Param"],
+                                         venn_values_fixed["GD_Vel"],
+                                         venn_values_fixed["GD_Param"],
+                                         venn_values_fixed["Vel_Param"])
+
+venn_values_fixed <- round(venn_values_fixed,3)
+
+library(eulerr)
+
+fit <- euler(c(
+    "GD" =  venn_values_fixed$GD,
+    "Vel" =  venn_values_fixed$Vel,
+    "Param" =  venn_values_fixed$Param,
+    "GD&Vel" =  venn_values_fixed$GD_Vel,
+    "GD&Param" =  venn_values_fixed$GD_Param,
+    "Vel&Param" =  venn_values_fixed$Vel_Param,
+    "GD&Vel&Param" =  venn_values_fixed$GD_Vel_Param,
+    "Methods" =  venn_values_fixed$Methods
+))
+
+plot(fit,
+     fills = c("skyblue", "pink", "lightgreen"),
+     alpha = 0.5,
+     labels = list(font = 2, cex = 1.2),  # bold labels
+     quantities = TRUE  # show values
+)
+
+
 ################################################################################
 ###############Fit a single model with Param*GD*climate velocity################
 ################################################################################
@@ -179,17 +315,17 @@ table(mydatatogo$Class)
 gam_velxGDxedge1 <- as.formula(
     "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
-    (Param|Class)")
+    (1|Class)")
 s1=69 #the initial random seed
 nB=12000 #the number of bootstraps
-nCPU=60
+nCPU=10
 
 #setting a local cluster
 my.cluster2 <- parallel::makeCluster(
     nCPU, 
     type = "PSOCK"
 )
-clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo","gam_velxGDxedge1","ranef","check_singularity"))
+clusterExport(cl = my.cluster2, varlist = c("s1","nB","glmmTMB","mydatatogo2","gam_velxGDxedge1","ranef","check_singularity"))
 
 #register cluster
 doParallel::registerDoParallel(cl = my.cluster2)
@@ -231,10 +367,10 @@ ex=pblapply(1:nB, function(i) {
                      weights = weight_obs_spp,
                      REML=F,
                      data = mydatatogo2)
-    
+    round(MuMIn::r.squaredGLMM(gamX1),2)
     r2=round(MuMIn::r.squaredGLMM(gamX1),2)
-    r2=data.frame(r2m=r2[1,1],
-                  r2c=r2[1,2],
+    r2=data.frame(r2m=r2[2,1],
+                  r2c=r2[2,2],
                   moy_GD=mean(mydatatogo2$GD), 
                   sd_GD=sd(mydatatogo2$GD),
                   moy_VC=mean(mydatatogo2$vel_abs), 
@@ -283,7 +419,7 @@ test2=function(x,mu=0){
 
 mod='allW'
 a=1
-s1=10 #the seed to make reproducible random staff
+s1=10 #the seed to make reproducible random stuff
 nB=10000
 setwd(dir.out)
 
@@ -325,6 +461,9 @@ for(i in 1:length(mod)){
         a=a+1
     }
 }
+
+head(resR2_ok)
+
 
 write.table(r2a,
             here(dir.out,paste0("R2_",nom,"_sel10000.csv")),
@@ -390,11 +529,11 @@ ex=pblapply(nB,function(i){
     gc(reset=T)
     print(i)
     c1a=subset(c1,nB==i)
-    eff=c1a$Estimate[c1a$var=="scale(GD)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    eff=c1a$Estimate[c1a$var=="GD_s"]+(c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
     tmp=data.frame(vel_abs=v1,GDeff_CE=eff)
-    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    eff=c1a$Estimate[c1a$var=="GD_s"]+c1a$Estimate[c1a$var=="GD_s:ParamLE"]+((c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]+c1a$Estimate[c1a$var=="vel_abs_s:GD_s:ParamLE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
     tmp$GDeff_LE=eff
-    eff=c1a$Estimate[c1a$var=="scale(GD)"]+c1a$Estimate[c1a$var=="scale(GD):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
+    eff=c1a$Estimate[c1a$var=="GD_s"]+c1a$Estimate[c1a$var=="GD_s:ParamTE"]+((c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]+c1a$Estimate[c1a$var=="vel_abs_s:GD_s:ParamTE"])*((v1-mean(dsel$vel_abs))/sd(dsel$vel_abs)))
     tmp$GDeff_TE=eff
     tmp$nB=i
     return(tmp)
@@ -483,11 +622,11 @@ ex=pblapply(nB,function(i){
     gc(reset=T)
     print(i)
     c1a=subset(c1,nB==i)
-    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+(c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    eff=c1a$Estimate[c1a$var=="vel_abs_s"]+(c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]*((v1-mean(dsel$GD))/sd(dsel$GD)))
     tmp=data.frame(GD=v1,VAeff_CE=eff)
-    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamLE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamLE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    eff=c1a$Estimate[c1a$var=="vel_abs_s"]+c1a$Estimate[c1a$var=="vel_abs_s:ParamLE"]+((c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]+c1a$Estimate[c1a$var=="vel_abs_s:GD_s:ParamLE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
     tmp$VAeff_LE=eff
-    eff=c1a$Estimate[c1a$var=="scale(vel_abs)"]+c1a$Estimate[c1a$var=="scale(vel_abs):ParamTE"]+((c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD)"]+c1a$Estimate[c1a$var=="scale(vel_abs):scale(GD):ParamTE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
+    eff=c1a$Estimate[c1a$var=="vel_abs_s"]+c1a$Estimate[c1a$var=="vel_abs_s:ParamTE"]+((c1a$Estimate[c1a$var=="vel_abs_s:GD_s"]+c1a$Estimate[c1a$var=="vel_abs_s:GD_s:ParamTE"])*((v1-mean(dsel$GD))/sd(dsel$GD)))
     tmp$VAeff_TE=eff
     tmp$nB=i
     return(tmp)
@@ -567,7 +706,7 @@ plot(Lat~vel_abs,data=mydatatogo)
 plot(log(SHIFT_abs)~vel_abs,data=mydatatogo)
 #looking at the the effect of latitude on the model residuals
 gam_velxGDxedge1 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + 
+    "SHIFT_abs ~ vel_abs_s * GD_s * Param + 
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
     (1 | Class)")
 
@@ -650,7 +789,7 @@ p1=predict(gamX2,mydatatogo2,re.form=~0)
 plot(p1~log(mydatatogo2$SHIFT_abs))
 resid=log(mydatatogo2$SHIFT_abs)-p1
 hist(resid)
-m1=lmer(resid~scale(vel_abs) * scale(GD) * Param +(1|Class),data=mydatatogo2,weights=weight_obs_spp,REML=F)
+m1=lmer(resid~vel_abs_s * GD_s * Param +(1|Class),data=mydatatogo2,weights=weight_obs_spp,REML=F)
 summary(m1) #GD, vel_abs and Param are significants
 MuMIn::r.squaredGLMM(m1)[1,]  #6.5% des résidus
 plot(resid~vel_abs,data=mydatatogo2)
@@ -671,7 +810,7 @@ plot(resid0~resid2)
 ##is methods and latitude in association with climate velocity and genetic diversity explaining species range shift? YES
 #meaning that climate velocity and genetic diversity drive a significant part of the determinism of the species range shifts, that is not confounded with the latitudinal gradient
 form2 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param + scale(Lat)+
+    "SHIFT_abs ~ vel_abs_s * GD_s * Param + scale(Lat)+
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
     (1 | Class)")
 gamX3 <- glmmTMB(form2, 
@@ -683,7 +822,7 @@ summary(gamX3) #latitude has a positive effect
 MuMIn::r.squaredGLMM(gamX3)[1,]  #37.9% => not better than the model without Latitude (gamX1 above)
 
 coeff2=data.frame(summary(gamX3)$coeff$cond,
-                 var=row.names(summary(gamX3)$coeff$cond))
+                  var=row.names(summary(gamX3)$coeff$cond))
 coeff2=coeff2[,c(1,ncol(coeff2))]
 names(coeff2)[1]="allA"
 coeff=merge(coeff,coeff2)
@@ -693,7 +832,7 @@ summary(lm1) ##coefficeient with and without considering lat are the same which 
 
 
 form3 <- as.formula(
-    "SHIFT_abs ~ scale(vel_abs) * scale(GD) * Param * scale(Lat)+
+    "SHIFT_abs ~ vel_abs_s * GD_s * Param * scale(Lat)+
     LogNtempUnits + LogExtent + ContinuousGrain + PrAb + Quality + 
     (1 | Class)")
 gamX4 <- glmmTMB(form3, 
@@ -738,7 +877,7 @@ mX1=subset(mX,delta<4)
 
 #correlation among covariates
 form4 <- as.formula(
-    "Lat ~ scale(vel_abs) * scale(GD) * Param + 
+    "Lat ~ vel_abs_s * GD_s * Param + 
     (1 | Class)")
 gamX5 <- glmmTMB(form4, 
                  family = Gamma(link = "log"),
